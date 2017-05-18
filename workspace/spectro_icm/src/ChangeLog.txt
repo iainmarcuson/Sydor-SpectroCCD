@@ -1,0 +1,18 @@
+2014-12-12T12:00:00 <Marco Bonati> LBNL version 1.1
+	* added lbnl_open, lbnl_close and lbnl_init
+	* changed lbnl_cont_ by lbnl_controller_
+	* changed the flag on lbnl_controller_enable from i8 to u64 to provide
+	enouhg bits for the mask
+	* changed parameters of lbnl_readout_get_data
+	* created lbnl_readout_get_memfits
+	* changed dac_struct and clock_struct to use an address instead of a
+	name, and also added telemetry 
+	* created data_t which corresponds to the width of the controller
+	registers
+	* changed read and write registers to use data_t instead of u32
+	* added comments in the typedefs
+	* defined UNTOUCH to be passed into set_cds or set_delays
+	routines when a particular field should not be modified
+
+2014-12-11T12:00:00 <Marco Bonati> LBNL version 1.0
+	* created
