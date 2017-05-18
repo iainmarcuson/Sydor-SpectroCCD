@@ -20,11 +20,11 @@
 #include <time.h>
 #include "lbnl_typedefs.h"
 // Firmware V1
-//#define		VIDEOMEM_SIZE  16384
-//#define		VIDEOMEM_ADDR  0x40010000
+#define		VIDEOMEM_SIZE  16384
+#define		VIDEOMEM_ADDR  0x40010000
 // Firmware Version 2
-#define		VIDEOMEM_SIZE  262144
-#define		VIDEOMEM_ADDR  0x40040000
+//#define		VIDEOMEM_SIZE  262144
+//#define		VIDEOMEM_ADDR  0x40040000
 
 #define WAVEMEM_SIZE 1024*4
 
