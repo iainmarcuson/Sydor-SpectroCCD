@@ -1246,6 +1246,7 @@ void *pt_read_picture(void *arg)
 {
   int fdin = *((int *) arg);
   pthread_mutex_lock(&acq_state);
+  img_acq_state = 1;
   int curr_bytes_sent, total_bytes_sent=0;
   //printf("In Read Picture thread.\n");
   
@@ -1272,6 +1273,8 @@ void *pt_read_picture(void *arg)
       //usleep(500000);
 
     }
+
+  img_acq_state = 0;
   pthread_mutex_unlock(&acq_state);
   return NULL;
 }
