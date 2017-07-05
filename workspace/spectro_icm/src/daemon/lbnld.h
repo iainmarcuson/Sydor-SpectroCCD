@@ -96,6 +96,7 @@
 #define LBNL_IMG_ACQ 80
 #define LBNL_IMG_READ 81
 #define LBNL_GET_ACQ_STATUS 90
+#define LBNL_GET_DAC_VALS 100
 
 //XXX FIXME TODO
 //Below are aggregated commands.  Make separate commands.

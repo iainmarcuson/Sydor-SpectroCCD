@@ -16,11 +16,12 @@ static image_num=0;
 
 //Image acquisition and readout thread variables
 static pthread_mutex_t acq_state = PTHREAD_MUTEX_INITIALIZER;
-static pthread_t acq_thread, read_thread;
+static pthread_t acq_thread, read_thread, fits_thread;
 static img_acq_state;
 
 void *pt_take_picture(void *arg);
 void *pt_read_picture(void *arg);
+void *pt_take_fits(void *arg);
 
 extern param_t config_params[5];
 
@@ -107,6 +108,7 @@ void *thread_main(void *arg)
   data_t regval;
   f32 faux1, faux2;
   dac_t *dacs;
+  f32 *dac_vals;
   cds_t cds;
   readout_t readstat;
   delays_t delay;
@@ -116,6 +118,7 @@ void *thread_main(void *arg)
   i32 iaux1, iaux2;
   char line[256];
   FILE *name_file;
+  int dac_idx;
 
 
   //  dacresp_t dacresp;
@@ -606,6 +609,17 @@ void *thread_main(void *arg)
 	response.status = 0;
 	printf ("taking image (buf 0x%lx) imbuffer[0] = %d\n", imbuffer, imbuffer[0]);
 	usleep (1000);
+	if (img_acq_state)
+	  {
+	    sprintf(response.strmsg, "ACQBUSY");
+	    send(fdin, (void *)&response, sizeof(respstruct_t),0);
+	    break;
+	  }
+	img_acq_state = 1;
+	pthread_create(&fits_thread, NULL, &pt_take_fits, &fdin);
+	sprintf(response.strmsg, "DONE");
+	send(fdin, (void *)&response, sizeof(respstruct_t),0);
+	break;
 
 	if ((ret=lbnl_ccd_read (dfd, imbuffer))!=0){
 	  printf ("ERROR acquiring %d\n",ret);
@@ -631,11 +645,9 @@ void *thread_main(void *arg)
 	  image_num++;	//Increment for next image
 
 	  if ((ret=lbnl_readout_get_fits (dfd, file_name_full, imbuffer)!=0)){
-	    printf ("ERROR writing %d\n",ret);
-	    sprintf (response.strmsg, "ERROR acquiring %d\n",ret);
+	    //printf ("ERROR writing %d\n",ret);
 	  } else {
-	    printf ("DONE\n");
-	    sprintf (response.strmsg, "DONE");
+	    //printf ("DONE\n");
 	  }
 	}
 	response.status = ret;
@@ -662,6 +674,41 @@ void *thread_main(void *arg)
 	  //				sleep (1);
 	  if ((ret = send (fdin, dacs, ndacs*sizeof (dac_t),0)) == -1)
 	    printf ("error sending data %d\n", ret);
+	free(dacs);		/* Avoid memory leak */
+	break;
+      case LBNL_GET_DAC_VALS:
+	printf ("cmd: GET_DAC_VALS\n");
+	if ((ret=lbnl_controller_get_ndacs (dfd, &ndacs))<0){
+	  printf ("ERROR %d\n",ret);
+	} else {
+	  dacs = (dac_t *) malloc (ndacs *sizeof (dac_t));
+	  dac_vals = (f32 *) malloc(ndacs * sizeof(f32));
+	  
+	  if ((ret=lbnl_controller_get_all_dacs (dfd, dacs, &ndacs))!=0){
+	    printf ("ERROR %d\n",ret);
+	  }
+	  //				pdebug ("daemon: dac[5] %d %f\n", dacs[5].address, dacs[5].tvalue);
+	}
+	response.status = ret;
+
+	/* Copy the actual values to a float array */
+	for (dac_idx = 0; dac_idx<ndacs; dac_idx++)
+	  {
+	    dac_vals[dac_idx] = dacs[dac_idx].tvalue;
+	  }
+
+	sprintf (response.strmsg, "OK");
+	//			ret = send (fdin, (void *)&response, sizeof(respstruct_t),0);
+	//			printf ("response %d (sent %d)\n", response.status, ret);
+	ret = 0;
+	if (ret >= 0)
+	  //				printf ("sending dacs\n");
+	  //				sleep (1);
+	  //if ((ret = send (fdin, dacs, ndacs*sizeof (dac_t),0)) == -1)
+	  if ((ret = send (fdin, dac_vals, ndacs*sizeof (f32),0)) == -1)
+	    printf ("error sending data %d\n", ret);
+	free(dacs);		/* Avoid memory leak */
+	free(dac_vals);
 	break;
       case LBNL_GET_NDACS:
 	//          printf ("cmd: GET_NDACS\n");
@@ -1232,6 +1279,49 @@ int lbnl_test_mode()
   return 0;
 }
 
+void *pt_take_fits(void *arg)
+{
+  int fdin = *((int *) arg);
+  int ret;
+
+  pthread_mutex_lock(&acq_state);
+
+  if ((ret=lbnl_ccd_read(dfd, imbuffer))!=0)
+    {
+      printf ("ERROR acquiring %d\n",ret);
+      //sprintf (response.strmsg, "ERROR acquiring %d\n",ret);
+    }
+  else
+    {
+      char file_name_full[200];
+      char file_count_ext[200];
+      time_t curr_time_t;
+      struct tm *curr_tm;
+      printf ("image acquired, writing\n");
+      
+      //FIXME TODO Robustify
+      //FIXME XXX TODO Note that this is not thread-safe
+      //Get the current time to timestamp the file
+      curr_time_t = time(NULL);
+      curr_tm = gmtime(&curr_time_t);
+      strftime(file_name_full, sizeof(file_name_full),"/data/image_%Y%m%d_%H%M%S_", curr_tm);
+      
+      //Create the string with the count and the extension
+      sprintf(file_count_ext, "%0.10u.fits", image_num);
+      strcat(file_name_full, file_count_ext);
+      image_num++;	//Increment for next image
+      
+      if ((ret=lbnl_readout_get_fits (dfd, file_name_full, imbuffer)!=0)){
+	printf ("ERROR writing %d\n",ret);
+      } else {
+	printf ("DONE\n");
+      }
+    }
+  img_acq_state = 0;
+  pthread_mutex_unlock(&acq_state);
+  return NULL;
+}
+  
 void *pt_take_picture(void * arg)
 {
   pthread_mutex_lock(&acq_state);
