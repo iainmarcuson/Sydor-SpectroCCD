@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <time.h>
+#include <string.h>
 #include "../lbnl_typedefs.h"
 #include "../lbnl_params.h"
 
@@ -24,6 +25,11 @@ void *pt_read_picture(void *arg);
 void *pt_take_fits(void *arg);
 
 extern param_t config_params[5];
+
+/* Enable mask variables to share across threads */
+static u32 enable_num;
+static u32 enable_dacmask;
+static u32 enable_clkmask;
 
 int main(int argc, char **argv)
 {
@@ -119,6 +125,11 @@ void *thread_main(void *arg)
   char line[256];
   FILE *name_file;
   int dac_idx;
+  /* Below used for loading enable data from config file */
+  FILE *cfg_file;
+  char config_line[256];
+  char *data_ptr;
+  i32 count_cfg_args;
 
 
   //  dacresp_t dacresp;
@@ -294,6 +305,17 @@ void *thread_main(void *arg)
 	response.data[9] = delay.other4;
 	send (fdin, (void *)&response, sizeof (respstruct_t),0);
 	break;
+      case LBNL_GET_ENABLE_VALS:
+	printf("cmd: GET_ENABLE_VALS\n");
+	if (1)
+	  {
+	    u32 enable_return[3];
+	    enable_return[0] = enable_num;
+	    enable_return[1] = enable_dacmask;
+	    enable_return[2] = enable_clkmask;
+	    send (fdin, (void *)enable_return, sizeof(enable_return),0);
+	  }
+	break;
       case LBNL_GET_PROG:
 	printf ("cmd: GET_PROG\n");
 	if ((ret=lbnl_readout_get_status (dfd, &readstat))!=0){
@@ -452,6 +474,29 @@ void *thread_main(void *arg)
 	} else {
 	  printf ("Uploaded OK\n");
 	}
+
+	/* Now parse the file for the enable masks */
+	/* First, set to use default masks if no enable entry */
+	enable_num = 2;
+	cfg_file = fopen(line,"r");
+	/* TODO FIXME Add failure checking */
+	/* TODO FIXME Handle too-long string */
+	while (fgets(config_line, sizeof(config_line), cfg_file))
+	  {
+	    data_ptr = strstr(config_line, "|");
+	    if (!data_ptr)	/* Special functions occur on non-data lines */
+	      {
+		/* REMOVETHIS  DEBUGGING */
+		printf("Special line is:\n %s\n",config_line);
+		count_cfg_args = sscanf(config_line,"Enable: %u %x %x ",
+					&enable_num, &enable_dacmask, &enable_clkmask);
+		/* REMOVETHIS DEBUGGING */
+		printf("Read %i arguments.\n", count_cfg_args);
+		printf("Enable params %u 0X%X 0x%X\n",
+		       enable_num, enable_dacmask, enable_clkmask); 
+	      }
+	  }
+	fclose(cfg_file);
 	response.status = ret;
 	send (fdin, (void *)&response, sizeof (respstruct_t),0);
 	break;
