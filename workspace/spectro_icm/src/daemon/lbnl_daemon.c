@@ -739,7 +739,7 @@ void *thread_main(void *arg)
 	/* Copy the actual values to a float array */
 	for (dac_idx = 0; dac_idx<ndacs; dac_idx++)
 	  {
-	    dac_vals[dac_idx] = dacs[dac_idx].tvalue;
+	    dac_vals[dac_idx] = dacs[dac_idx].telemetry;
 	  }
 
 	sprintf (response.strmsg, "OK");
