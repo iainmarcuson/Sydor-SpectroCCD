@@ -120,11 +120,13 @@ void *thread_main(void *arg)
   delays_t delay;
   status_t constat;
   lbnl_clock_t *clocks;
+  f32 *clk_vals;
   unsigned short ndacs;
   i32 iaux1, iaux2;
   char line[256];
   FILE *name_file;
   int dac_idx;
+  int clk_idx;
   /* Below used for loading enable data from config file */
   FILE *cfg_file;
   char config_line[256];
@@ -906,6 +908,7 @@ void *thread_main(void *arg)
 	  //				sleep (1);
 	  if ((ret = send (fdin, clocks, ndacs*sizeof (lbnl_clock_t),0)) == -1)
 	    printf ("error sending data %d\n", ret);
+	free(clocks);
 	break;
       case LBNL_GET_NCLKS:
 	//                      printf ("cmd: GET_NCLOCKS\n");
@@ -915,6 +918,33 @@ void *thread_main(void *arg)
 	response.status = ret;
 	response.data[0] = ndacs;
 	send (fdin, (void *)&response, sizeof(respstruct_t),0);
+	break;
+      case LBNL_GET_CLK_VALS:
+	printf("cmd: GET_CLK_VALS\n");
+	if ((ret=lbnl_controller_get_nclocks (dfd, &ndacs))<0)
+	  {
+	    printf ("ERROR %d\n",ret);
+	    return ret;
+	  }
+
+	clocks = (lbnl_clock_t *) malloc (ndacs *sizeof (lbnl_clock_t));
+	clk_vals = (f32 *) malloc(ndacs *sizeof(f32));
+	
+	if ((ret=lbnl_controller_get_all_clocks (dfd, clocks, &ndacs))!=0)
+	  {
+	    printf ("ERROR %d\n",ret);
+	    return ret;
+	  }
+	for (clk_idx = 0; clk_idx<ndacs; clk_idx++)
+	  {
+	    clk_vals[clk_idx] = clocks[clk_idx].telemetry;
+	  }
+	if ((ret=send (fdin, (void *) clk_vals, ndacs*sizeof(f32),0)) == -1)
+	  {
+	    printf("error sending data %d\n", ret);
+	  }
+	free(clocks);
+	free(clk_vals);
 	break;
       case LBNL_SET_CPARS:
 	printf ("cmd: SET_CPARS %d\n", message.data[0]);
