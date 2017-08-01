@@ -1386,7 +1386,7 @@ void *pt_take_fits(void *arg)
       strcat(file_name_full, file_count_ext);
       image_num++;	//Increment for next image
       
-      if ((ret=lbnl_readout_get_fits (dfd, file_name_full, imbuffer)!=0)){
+      if ((ret=lbnl_readout_get_fits (dfd, file_name_full, imbuffer))!=0){
 	printf ("ERROR writing %d\n",ret);
       } else {
 	printf ("DONE\n");
