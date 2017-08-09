@@ -1200,12 +1200,21 @@ int lbnl_readout_get_fits (dref fd, char *impath, u16 image_data[])
   if ( fits_create_img(fptr,  bitpix, naxis, naxes, &status) )
     return( status );
 
+  //DEBUGGING REMOVETHIS
+  printf("Past fits_create_image\n");
+
   fpixel = 1;                               /* first pixel to write      */
   nelements = naxes[0] * naxes[1];          /* number of pixels to write */
 
   /* write the array of unsigned integers to the FITS file */
   if ( fits_write_img(fptr, TUSHORT, fpixel, nelements, image_data, &status) )
-    return( status );
+    {
+      printf("fits_write_img status value is %i.\n",status);
+      return( status );
+    }
+
+  //DEBUGGING REMOVETHIS
+  printf("Past fits_write_img\n");
 
   /* write another optional keyword to the header */
   /* Note that the ADDRESS of the value is passed in the routine */
@@ -1213,6 +1222,9 @@ int lbnl_readout_get_fits (dref fd, char *impath, u16 image_data[])
   if ( fits_update_key(fptr, TUINT, "EXPOSURE", &exposure,
 		       "Total Exposure Time", &status) )
     return( status );
+
+  //DEBUGGING REMOVETHIS
+  printf("Past fits_updata_key EXPOSURE\n");
 
   time_t current_time;
   struct tm* current_time_struct;
@@ -1227,8 +1239,13 @@ int lbnl_readout_get_fits (dref fd, char *impath, u16 image_data[])
 		       "date of file creation in UTC", &status) )
     return( status );
 
+  //DEBUGGING REMOVETHIS
+  printf("Past fits_update_key DATE\n");
+
   if ( fits_close_file(fptr, &status) )                /* close the file */
     return( status );
+
+  printf("Past fits_close_file\n");
   return (DONE);
 }
 
@@ -1278,7 +1295,14 @@ int lbnl_readout_get_status (dref fd, readout_t *readstat)
   readstat->rows_read = ccd_read_progress;
   u16 rows, cols;
   lbnl_ccd_get_size(fd, &cols, &rows);
-  readstat->progress = (ccd_read_progress * 100) / rows;
+  if (rows == 0)
+  {
+	  readstat->progress = 0;
+  }
+  else
+  {
+	  readstat->progress = (ccd_read_progress * 100) / rows;
+  }
   return 0;
   //TODO
 }
