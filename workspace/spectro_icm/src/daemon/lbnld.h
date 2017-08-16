@@ -99,6 +99,8 @@
 #define LBNL_GET_DAC_VALS 100
 #define LBNL_GET_ENABLE_VALS 110
 #define LBNL_GET_CLK_VALS 140
+#define LBNL_GET_EXPT 150
+
 
 //XXX FIXME TODO
 //Below are aggregated commands.  Make separate commands.

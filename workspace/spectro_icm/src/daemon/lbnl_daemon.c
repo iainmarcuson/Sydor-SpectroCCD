@@ -31,6 +31,10 @@ static u32 enable_num;
 static u32 enable_dacmask;
 static u32 enable_clkmask;
 
+/* Exposure time to share across threads */
+static u32 exp_time;		/* Holds the total exposure time */
+static u32 exp_time_elapsed;	/* How much of an exposure time has elapsed */
+
 int main(int argc, char **argv)
 {
   int              connfd, len;
@@ -496,6 +500,14 @@ void *thread_main(void *arg)
 		printf("Read %i arguments.\n", count_cfg_args);
 		printf("Enable params %u 0X%X 0x%X\n",
 		       enable_num, enable_dacmask, enable_clkmask); 
+
+		/* Parse exposure time */
+		count_cfg_args = sscanf(config_line, "ExpTime: %u ", &exp_time);
+		/* REMOVETHIS DEBUGGING */
+		/*if ((count_cfg_args == 1) || 1)
+		  {
+		    printf("Exposure time is %u.\n", exp_time);
+		    }*/
 	      }
 	  }
 	fclose(cfg_file);
@@ -504,15 +516,17 @@ void *thread_main(void *arg)
 	break;
 
       case LBNL_SET_EXPT:
-	printf ("cmd: SET_EXPT\ndata: %s\n",message.strmsg);
-	if (strlen(message.strmsg) <= 0){
-	  printf ("ERROR %d\n",ret);
-	  sprintf (response.strmsg, "ERROR %d\n",ret);
-	} else{
-	  ret = 0;
-	}
-	response.status = ret;
+	printf ("cmd: SET_EXPT\n");
+	exp_time = message.data[0];
+	response.status = 0;
+	sprintf(response.strmsg, "DONE");
 	send (fdin, (void *)&response, sizeof (respstruct_t),0);
+	break;
+      case LBNL_GET_EXPT:
+	printf ("cmd: GET_EXPT\n");
+	response.data[0] = exp_time;
+	sprintf(response.strmsg, "DONE");
+	send (fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
       case LBNL_TEMPS:
 	printf ("cmd: TEMPS\n");
@@ -1422,6 +1436,7 @@ void *pt_read_picture(void *arg)
       const int NUM_TO_SEND = 2085120;
       start_byte = total_bytes_sent;
       stop_byte = start_byte + NUM_TO_SEND-1;
+      printf("Byte %i: %hx\n", start_byte, imbuffer[start_byte]);
       if (stop_byte >= (1448*1440*sizeof(imbuffer[0])))
 	{
 	  stop_byte = (1448*1440*sizeof(imbuffer[0])-1);
