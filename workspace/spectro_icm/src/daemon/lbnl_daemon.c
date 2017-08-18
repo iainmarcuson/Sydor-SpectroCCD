@@ -15,6 +15,9 @@ unsigned int bsize;
 u16 *imbuffer;
 static image_num=0;
 
+//Image size
+static u32 img_size_x, img_size_y;
+
 //Image acquisition and readout thread variables
 static pthread_mutex_t acq_state = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t acq_thread, read_thread, fits_thread;
@@ -222,6 +225,8 @@ void *thread_main(void *arg)
 	response.status = ret;
 	response.data[0] = (u32) aux1;
 	response.data[1] = (u32) aux2;
+	img_size_x = (u32) aux1;
+	img_size_y = (u32) aux2;
 	send (fdin, (void *)&response, sizeof (respstruct_t),0);
 	break;
       case LBNL_GET_REG:
@@ -1413,36 +1418,58 @@ void *pt_take_fits(void *arg)
   
 void *pt_take_picture(void * arg)
 {
+  //DEBUGGING REMOVETHIS
+  int pixel_count=20;
   pthread_mutex_lock(&acq_state);
   //XXX TODO Robustify
   lbnl_ccd_read(dfd, imbuffer);
   img_acq_state = 0;
   pthread_mutex_unlock(&acq_state);
+
+  //DEBUGGING REMOVETHIS
+  for (pixel_count = 0; pixel_count < 20; pixel_count++)
+    {
+      printf("%hx, ",imbuffer[pixel_count]);
+    }
+  printf("\n");
+  
   return NULL;
 }
 
 void *pt_read_picture(void *arg)
 {
   int fdin = *((int *) arg);
+  int pixel_count = 20;
   pthread_mutex_lock(&acq_state);
   img_acq_state = 1;
   int curr_bytes_sent, total_bytes_sent=0;
   //printf("In Read Picture thread.\n");
+
+  for (pixel_count = 0; pixel_count < 20; pixel_count++)
+    {
+       printf("%hx, ",imbuffer[pixel_count]);
+    }
+  printf("\n");
   
   //XXX TODO Robustify Eliminate magic numbers
-  while (total_bytes_sent < (1448*1440*sizeof(imbuffer[0])))
+  while (total_bytes_sent < (img_size_x*img_size_y*sizeof(imbuffer[0])))
     {
       int start_byte, stop_byte;
       const int NUM_TO_SEND = 2085120;
+     
       start_byte = total_bytes_sent;
       stop_byte = start_byte + NUM_TO_SEND-1;
-      printf("Byte %i: %hx\n", start_byte, imbuffer[start_byte]);
-      if (stop_byte >= (1448*1440*sizeof(imbuffer[0])))
+      //printf("Byte %i: %hx\n", start_byte, imbuffer[start_byte]);
+      if (stop_byte >= (img_size_x*img_size_y*sizeof(imbuffer[0])))
 	{
-	  stop_byte = (1448*1440*sizeof(imbuffer[0])-1);
+	  stop_byte = (img_size_x*img_size_y*sizeof(imbuffer[0])-1);
 	}
+      printf("Start byte: %u, Stop byte %u, Max byte %u.\n",
+	     start_byte, stop_byte,
+	     img_size_x*img_size_y*sizeof(imbuffer[0])-1);
+      
       curr_bytes_sent = send(fdin, ((char *)imbuffer)+start_byte, stop_byte-start_byte+1, 0);
-      //printf("Sent %li bytes, %li total.\n", curr_bytes_sent, total_bytes_sent);
+      printf("Sent %li bytes, %li total.\n", curr_bytes_sent, total_bytes_sent);
       if (curr_bytes_sent == -1)
 	{
 	  perror("");
