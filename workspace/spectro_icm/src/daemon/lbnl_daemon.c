@@ -1455,7 +1455,8 @@ void *pt_read_picture(void *arg)
   while (total_bytes_sent < (img_size_x*img_size_y*sizeof(imbuffer[0])))
     {
       int start_byte, stop_byte;
-      const int NUM_TO_SEND = 2085120;
+      //const int NUM_TO_SEND = 2085120;
+      const int NUM_TO_SEND = 25000000;
      
       start_byte = total_bytes_sent;
       stop_byte = start_byte + NUM_TO_SEND-1;
