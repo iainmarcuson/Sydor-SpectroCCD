@@ -587,16 +587,27 @@ int lbnl_ccd_read (dref fd, u16 imageData[])
 	tmpchannas = *((i16 *) &tmpchanna);
 	tmpchannb = tempdata>>16;
 	tmpchannbs = *((i16 *) &tmpchannb);
-	imageData[columns * rows-1 - (columns*rowIndex) - columnIndex] =  tmpchannas + 32768u; //CH1
-	imageData[columns * (rows-1) - (columns*rowIndex)+ columnIndex] = tmpchannbs + 32768u; // CH3 i+1 used for testing quadrant1
+	//	code before the new controller with spectroccd v0
+	//	imageData[columns * rows-1 - (columns*rowIndex) - columnIndex] =  tmpchannas + 32768u; //CH1
+	//	imageData[columns * (rows-1) - (columns*rowIndex)+ columnIndex] = tmpchannbs + 32768u; // CH3 i+1 used for testing quadrant1
 
-	tempdata = *((u32 *)(videobuffer.ptr + videobuffer.page_offset + offset+(i*8)+4));
-	tmpchanna = tempdata&0xffff;
-	tmpchannas = *((i16 *) &tmpchanna);
-	tmpchannb = tempdata>>16;
-	tmpchannbs = *((i16 *) &tmpchannb);
-	imageData[rowIndex * columns + columnIndex] =  tmpchannbs + 32768u; //CH4
-	imageData[rowIndex * columns + columns - columnIndex -1] = tmpchannas + 32768u; //CH2				
+		// Azriel new variant to correct orientation with new controller and spectroccd V0 Aug 2017
+		imageData[columns * rows-1 - (columns*rowIndex) - columnIndex] =  tmpchannas + 32768u;
+		imageData[rowIndex * columns + columns - columnIndex -1] = tmpchannbs + 32768u;
+
+		tempdata = *((u32 *)(videobuffer.ptr + videobuffer.page_offset + offset+(i*8)+4));
+		tmpchanna = tempdata&0xffff;
+		tmpchannas = *((i16 *) &tmpchanna);
+		tmpchannb = tempdata>>16;
+		tmpchannbs = *((i16 *) &tmpchannb);
+	//	code before the new controller with spectroccd v0
+	//	imageData[rowIndex * columns + columnIndex] =  tmpchannbs + 32768u; //CH4
+	//	imageData[rowIndex * columns + columns - columnIndex -1] = tmpchannas + 32768u; //CH2
+
+		// Azriel new variant to correct orientation with new controller and spectroccd V0 Aug 2017
+		imageData[columns * (rows-1) - (columns*rowIndex)+ columnIndex] = tmpchannbs + 32768u;
+		imageData[rowIndex * columns + columnIndex] = tmpchannas + 32768u;
+
 				
       }
 #ifdef BENCHMARK_READ
@@ -633,6 +644,8 @@ int lbnl_ccd_read (dref fd, u16 imageData[])
 
   return(error);
 }
+
+
 
 /**
  * starts exposure and reads the image buffer
