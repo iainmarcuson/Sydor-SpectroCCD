@@ -3,8 +3,10 @@
 #include "../lbnl_prototypes.h"
 #include <errno.h>
 #include <pthread.h>
+#include <semaphore.h>
 #include <time.h>
 #include <string.h>
+#include <sys/time.h>
 #include "../lbnl_typedefs.h"
 #include "../lbnl_params.h"
 
@@ -19,13 +21,16 @@ static image_num=0;
 static u32 img_size_x, img_size_y;
 
 //Image acquisition and readout thread variables
-static pthread_mutex_t acq_state = PTHREAD_MUTEX_INITIALIZER;
+static sem_t acq_state;
 static pthread_t acq_thread, read_thread, fits_thread;
 static img_acq_state;
 
 void *pt_take_picture(void *arg);
 void *pt_read_picture(void *arg);
 void *pt_take_fits(void *arg);
+
+//TODO ultimately can be aborted
+int wait_exposure_time();	/* Waits for a exposure time */
 
 extern param_t config_params[5];
 
@@ -56,6 +61,8 @@ int main(int argc, char **argv)
   if (bind(listenfd,(struct sockaddr *) &address, sizeof(address)) == 0)
     printf("Binding Socket\n");
 
+  sem_init(&acq_state, 0, 1);	/* Only one thread at a time can use the
+				   camera */
   listen (listenfd,LBNL_MAX_CONNECT);
   signal(SIGINT, signal_handler);
   signal(SIGPIPE, signal_handler);
@@ -139,6 +146,7 @@ void *thread_main(void *arg)
   char config_line[256];
   char *data_ptr;
   i32 count_cfg_args;
+  int sem_status;
 
 
   //  dacresp_t dacresp;
@@ -530,6 +538,12 @@ void *thread_main(void *arg)
       case LBNL_GET_EXPT:
 	printf ("cmd: GET_EXPT\n");
 	response.data[0] = exp_time;
+	sprintf(response.strmsg, "DONE");
+	send (fdin, (void *)&response, sizeof(respstruct_t),0);
+	break;
+      case LBNL_GET_ELAPSED_TIME:
+	printf ("cmd: GET_ELAPSED_TIME\n");
+	response.data[0] = exp_time_elapsed;
 	sprintf(response.strmsg, "DONE");
 	send (fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
@@ -1124,22 +1138,29 @@ void *thread_main(void *arg)
 	break;
       case LBNL_IMG_ACQ:
 	printf ("cmd: IMG_ACQ \n");
-	if (img_acq_state) /* Currently acquiring , so don't acquire again */
+	
+	sem_status = sem_trywait(&acq_state);
+	if (sem_status) /* Currently acquiring , so don't acquire again */
 	  {
 	    sprintf( response.strmsg, "ACQBUSY");
 	    send(fdin, (void *)&response, sizeof(respstruct_t),0);
 	    break;
 	  }
-	//XXX TODO Robustify both thread creation and possibly race condition in state variable
+	//TODO FIXME update img_acq_state as progress is made
 	img_acq_state = 1;
 	pthread_create(&acq_thread, NULL, &pt_take_picture, NULL);
 	sprintf( response.strmsg, "DONE");
 	send(fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
       case LBNL_IMG_READ:
-	printf ("cmd: IMG_ACQ \n");
-	//checkerboard();
-	//pthread_create(&read_thread, NULL, &pt_read_picture, &fdin);
+	printf ("cmd: IMG_READ \n");
+	sem_status = sem_trywait(&acq_state);
+	if (sem_status)
+	  {
+	    sprintf( response.strmsg, "ACQBUSY");
+	    send(fdin, (void *)&response, sizeof(respstruct_t),0);
+	    break;
+	  }
 	pt_read_picture(&fdin);
 	//sprintf( response.strmsg, "DONE");
 	//send(fdin, (void *)&response, sizeof(respstruct_t),0);
@@ -1418,39 +1439,21 @@ void *pt_take_fits(void *arg)
   
 void *pt_take_picture(void * arg)
 {
-  //DEBUGGING REMOVETHIS
-  int pixel_count=20;
-  pthread_mutex_lock(&acq_state);
-  //XXX TODO Robustify
+  //TODO FIXME Add clearing logic and update status variable
   lbnl_ccd_read(dfd, imbuffer);
   img_acq_state = 0;
-  pthread_mutex_unlock(&acq_state);
+  sem_post(&acq_state);
 
-  //DEBUGGING REMOVETHIS
-  for (pixel_count = 0; pixel_count < 20; pixel_count++)
-    {
-      printf("%hx, ",imbuffer[pixel_count]);
-    }
-  printf("\n");
-  
   return NULL;
 }
 
 void *pt_read_picture(void *arg)
 {
   int fdin = *((int *) arg);
-  int pixel_count = 20;
-  pthread_mutex_lock(&acq_state);
+  //FIXME TODO Update status variable as progress is made
   img_acq_state = 1;
   int curr_bytes_sent, total_bytes_sent=0;
-  //printf("In Read Picture thread.\n");
-
-  for (pixel_count = 0; pixel_count < 20; pixel_count++)
-    {
-       printf("%hx, ",imbuffer[pixel_count]);
-    }
-  printf("\n");
-  
+      
   //XXX TODO Robustify Eliminate magic numbers
   while (total_bytes_sent < (img_size_x*img_size_y*sizeof(imbuffer[0])))
     {
@@ -1483,7 +1486,7 @@ void *pt_read_picture(void *arg)
     }
 
   img_acq_state = 0;
-  pthread_mutex_unlock(&acq_state);
+  sem_post(&acq_state);
   return NULL;
 }
 
@@ -1512,4 +1515,27 @@ int checkerboard()
 	}
     }
   return 0;
+}
+
+/* TODO Add capability of interrupting timer */
+int wait_exposure_time()
+{
+  struct timeval start_time, curr_time, diff_time;
+
+  gettimeofday(&start_time, NULL);
+
+  while (1)
+    {
+      usleep(100000);
+      gettimeofday(&curr_time, NULL);
+      timersub(&curr_time, &start_time, &diff_time);
+      exp_time_elapsed = diff_time.tv_sec;
+
+      if (exp_time_elapsed > exp_time)
+	{
+	  break;
+	}
+    }
+
+  return 0;			/* All went well */
 }
