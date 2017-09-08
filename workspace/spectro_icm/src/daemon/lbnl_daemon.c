@@ -1399,8 +1399,9 @@ void *pt_take_fits(void *arg)
   int fdin = *((int *) arg);
   int ret;
 
-  pthread_mutex_lock(&acq_state);
+  //pthread_mutex_lock(&acq_state);
 
+  wait_exposure_time();
   if ((ret=lbnl_ccd_read(dfd, imbuffer))!=0)
     {
       printf ("ERROR acquiring %d\n",ret);
@@ -1433,13 +1434,15 @@ void *pt_take_fits(void *arg)
       }
     }
   img_acq_state = 0;
-  pthread_mutex_unlock(&acq_state);
+  //pthread_mutex_unlock(&acq_state);
   return NULL;
 }
   
 void *pt_take_picture(void * arg)
 {
   //TODO FIXME Add clearing logic and update status variable
+  //TODO Change behavior based on return from waiting
+  wait_exposure_time();
   lbnl_ccd_read(dfd, imbuffer);
   img_acq_state = 0;
   sem_post(&acq_state);
