@@ -95,11 +95,14 @@
 #define LBNL_GET_CFG_STRING_ARRAY 71
 #define LBNL_IMG_ACQ 80
 #define LBNL_IMG_READ 81
+#define LBNL_IMG_ABORT 82
 #define LBNL_GET_ACQ_STATUS 90
 #define LBNL_GET_DAC_VALS 100
 #define LBNL_GET_ENABLE_VALS 110
 #define LBNL_GET_CLK_VALS 140
 #define LBNL_GET_EXPT 150
+#define LBNL_GET_ELAPSED_TIME 151
+#define LBNL_GET_EXPTIME_PROG 152
 
 
 //XXX FIXME TODO
@@ -134,3 +137,14 @@ typedef struct {
         int status;
         dac_t *dacs;
 } dacresp_t;
+
+enum ImgAcqStatus {
+	Not_Started = 128,
+	Done = 129,
+	Aborted = 130,
+	Clearing = 1,
+	Exposing = 2,
+	Readout = 3,
+	Sending = 4
+};
+

@@ -1295,6 +1295,8 @@ int lbnl_controller_get_status (dref fd, status_t *contstat)
   contstat->dac_mask = ccd_dac_mask;
   //    printf ("lib: returning masks dac 0x%x clk 0x%x\n", contstat->dac_mask,contstat->clk_mask);
   printf ("idle: %d\n", contstat->ccd_idle);
+
+  
   return (error); //TODO
 }
 
