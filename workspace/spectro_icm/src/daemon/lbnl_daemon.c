@@ -23,7 +23,8 @@ static u32 img_size_x, img_size_y;
 //Image acquisition and readout thread variables
 static sem_t acq_state;
 static pthread_t acq_thread, read_thread, fits_thread;
-static img_acq_state;
+static enum ImgAcqStatus img_acq_state;
+static pthread_mutex_t acq_state_mutex;
 
 void *pt_take_picture(void *arg);
 void *pt_read_picture(void *arg);
@@ -42,7 +43,8 @@ static u32 enable_clkmask;
 /* Exposure time to share across threads */
 static u32 exp_time;		/* Holds the total exposure time */
 static u32 exp_time_elapsed;	/* How much of an exposure time has elapsed */
-
+static u32 exp_abort;		/* Flag to abort an exposure during the 
+				 exposure time */
 int main(int argc, char **argv)
 {
   int              connfd, len;
@@ -70,6 +72,11 @@ int main(int argc, char **argv)
   //XXX FIXME uncomment this signal(SIGTERM,signal_handler); /* catch kill signal */
   addrlen = sizeof(struct sockaddr_in);
 
+  pthread_mutex_init(&acq_state_mutex, NULL);
+  pthread_mutex_lock(&acq_state_mutex);
+  img_acq_state = Not_Started;
+  pthread_mutex_unlock(&acq_state_mutex);
+  
   /* Test mode */
   if ((argc>=2) && (strcmp(argv[1], "--test") == 0))
     {
@@ -357,7 +364,8 @@ void *thread_main(void *arg)
 	  sprintf (response.strmsg, "DONE");
 	}
 	response.status = ret;
-	response.data[0] = constat.power_on;
+	iaux1 = (signed int)((signed char) constat.power_on);
+	*((i32 *)&response.data[0]) = iaux1;	//Result is signed
 	response.data[1] = constat.ccd_idle;
 	response.data[2] = constat.clk_mask;
 	response.data[3] = constat.dac_mask;
@@ -547,6 +555,23 @@ void *thread_main(void *arg)
 	sprintf(response.strmsg, "DONE");
 	send (fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
+      case LBNL_GET_EXPTIME_PROG:
+	printf ("cmd: GET_EXPTIME_PROG\n");
+	if (exp_time == 0)
+	  {
+	    response.data[0] = 100;	/* If no exposure time, say it is 
+					 complete. */
+	  }
+	else
+	  {
+	    response.data[0] = 100*
+	      (((double) exp_time_elapsed)/((double) exp_time)); /* Return percent complete */
+	  }
+	sprintf(response.strmsg, "DONE");
+	send (fdin, (void *)&response, sizeof(respstruct_t),0);
+	break;
+	
+	
       case LBNL_TEMPS:
 	printf ("cmd: TEMPS\n");
 	if ((ret=lbnl_controller_get_temps (dfd, &faux1, &faux2))!=0){
@@ -685,10 +710,18 @@ void *thread_main(void *arg)
 	  send (fdin, (char *)imbuffer, nbytes,0);
 	}
 	break;
+      case LBNL_IMG_ABORT:
+	response.status = 0;
+	printf("cmd: Abort\n");
+	exp_abort = 1;		/* Set the abort flag */
+	sprintf (response.strmsg, "DONE");
+	send (fdin, (void *)&response, sizeof (respstruct_t),0);
+	break;
       case LBNL_FITS:
 	response.status = 0;
 	printf ("taking image (buf 0x%lx) imbuffer[0] = %d\n", imbuffer, imbuffer[0]);
 	usleep (1000);
+	//FIXME TODO Handle new img_acq_state values
 	if (img_acq_state)
 	  {
 	    sprintf(response.strmsg, "ACQBUSY");
@@ -1146,8 +1179,11 @@ void *thread_main(void *arg)
 	    send(fdin, (void *)&response, sizeof(respstruct_t),0);
 	    break;
 	  }
-	//TODO FIXME update img_acq_state as progress is made
-	img_acq_state = 1;
+	//XXX FIXME How to deal with inconsistent state between semaphore and mutex
+	pthread_mutex_lock(&acq_state_mutex);
+	img_acq_state = Not_Started;
+	pthread_mutex_unlock(&acq_state_mutex);
+
 	pthread_create(&acq_thread, NULL, &pt_take_picture, NULL);
 	sprintf( response.strmsg, "DONE");
 	send(fdin, (void *)&response, sizeof(respstruct_t),0);
@@ -1157,6 +1193,8 @@ void *thread_main(void *arg)
 	sem_status = sem_trywait(&acq_state);
 	if (sem_status)
 	  {
+	    //FIXME XXX Client code expects a full image, so this may
+	    /* Cause problems if read without semaphore */
 	    sprintf( response.strmsg, "ACQBUSY");
 	    send(fdin, (void *)&response, sizeof(respstruct_t),0);
 	    break;
@@ -1346,8 +1384,10 @@ void *thread_main(void *arg)
 
       case LBNL_GET_ACQ_STATUS:
 	sprintf(response.strmsg, "DONE");
+	pthread_mutex_lock(&acq_state_mutex);
 	response.data[0] = img_acq_state;
-	printf("img_acq_state is %i.\n", img_acq_state);
+	pthread_mutex_unlock(&acq_state_mutex);
+	printf("img_acq_state is %i.\n", response.data[0]);
 	send(fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
 	
@@ -1401,6 +1441,8 @@ void *pt_take_fits(void *arg)
 
   //pthread_mutex_lock(&acq_state);
 
+  //TODO Make thread safe?
+  exp_abort = 0;		/* Clear old abort command, if any */
   wait_exposure_time();
   if ((ret=lbnl_ccd_read(dfd, imbuffer))!=0)
     {
@@ -1440,11 +1482,39 @@ void *pt_take_fits(void *arg)
   
 void *pt_take_picture(void * arg)
 {
+  int wait_status = 0;
   //TODO FIXME Add clearing logic and update status variable
   //TODO Change behavior based on return from waiting
-  wait_exposure_time();
+  //TODO Make abort flag thread safe?
+
+  pthread_mutex_lock(&acq_state_mutex);
+  img_acq_state = Clearing;
+  pthread_mutex_unlock(&acq_state_mutex);
+  lbnl_ccd_clear(dfd);
+
+  pthread_mutex_lock(&acq_state_mutex);
+  img_acq_state = Exposing;
+  pthread_mutex_unlock(&acq_state_mutex);
+  wait_status = wait_exposure_time();
+
+  if (wait_status)
+    {
+      exp_abort = 0;		/* Clear abort flag so we do not trigger
+				 on next run.  This also allows an abort on
+				the other steps to trigger here.*/
+      goto end_exp;		/* Exposure aborted */
+    }
+
+  pthread_mutex_lock(&acq_state_mutex);
+  img_acq_state = Readout;
+  pthread_mutex_unlock(&acq_state_mutex);
   lbnl_ccd_read(dfd, imbuffer);
-  img_acq_state = 0;
+
+  pthread_mutex_lock(&acq_state_mutex);
+  img_acq_state = Done;
+  pthread_mutex_unlock(&acq_state_mutex);
+
+ end_exp:
   sem_post(&acq_state);
 
   return NULL;
@@ -1454,7 +1524,10 @@ void *pt_read_picture(void *arg)
 {
   int fdin = *((int *) arg);
   //FIXME TODO Update status variable as progress is made
-  img_acq_state = 1;
+  pthread_mutex_lock(&acq_state_mutex);
+  img_acq_state = Sending;
+  pthread_mutex_unlock(&acq_state_mutex);
+
   int curr_bytes_sent, total_bytes_sent=0;
       
   //XXX TODO Robustify Eliminate magic numbers
@@ -1487,8 +1560,11 @@ void *pt_read_picture(void *arg)
       //usleep(500000);
 
     }
+  
+  pthread_mutex_lock(&acq_state_mutex);
+  img_acq_state = Done;
+  pthread_mutex_unlock(&acq_state_mutex);
 
-  img_acq_state = 0;
   sem_post(&acq_state);
   return NULL;
 }
@@ -1534,7 +1610,14 @@ int wait_exposure_time()
       timersub(&curr_time, &start_time, &diff_time);
       exp_time_elapsed = diff_time.tv_sec;
 
-      if (exp_time_elapsed > exp_time)
+      if (exp_abort)
+	{
+	  pthread_mutex_lock(&acq_state_mutex);
+	  img_acq_state = Aborted;
+	  pthread_mutex_unlock(&acq_state_mutex);
+	  return 1;		/* Return img_acq aborted */
+	}
+      if (exp_time_elapsed >= exp_time)
 	{
 	  break;
 	}
