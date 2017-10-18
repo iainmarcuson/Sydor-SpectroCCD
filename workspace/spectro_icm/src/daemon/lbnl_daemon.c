@@ -16,6 +16,7 @@ dref dfd;
 unsigned int bsize;
 u16 *imbuffer;
 static image_num=0;
+static u32 cfg_gain;
 
 //Image size
 static u32 img_size_x, img_size_y;
@@ -148,6 +149,7 @@ void *thread_main(void *arg)
   FILE *name_file;
   int dac_idx;
   int clk_idx;
+  int off_idx;
   /* Below used for loading enable data from config file */
   FILE *cfg_file;
   char config_line[256];
@@ -641,9 +643,16 @@ void *thread_main(void *arg)
 	  sprintf (response.strmsg, "ERROR %d\n",ret);
 	} else {
 	  sprintf (response.strmsg, "DONE");
+	  cfg_gain = message.data[0];
 	}
 	response.status = ret;
 	send (fdin, (void *)&response, sizeof (respstruct_t),0);
+	break;
+      case LBNL_GET_GAIN:
+	printf ("cmd: GET GAIN %d\n", cfg_gain);
+	/* FIXME TODO Add in status setting code. */
+	response.data[0] = cfg_gain;
+	send (fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
       case LBNL_EXP_ADD:
 	printf ("cmd: EXP_ADD %d\n", message.data[0]);
@@ -917,6 +926,33 @@ void *thread_main(void *arg)
 	  //				sleep (1);
 	  if ((ret = send (fdin, dacs, ndacs*sizeof (dac_t),0)) == -1)
 	    printf ("error sending data %d\n", ret);
+	break;
+
+	case LBNL_GET_OFF_VALS:
+	printf ("cmd: GET_OFF_VALS\n");
+	if ((ret=lbnl_controller_get_noffsets (dfd, &ndacs))<0){
+	  printf ("ERROR %d\n",ret);
+	} else {
+	  dac_vals = (f32 *) malloc (ndacs *sizeof(f32));
+	  dacs = (dac_t *) malloc (ndacs *sizeof (dac_t));
+	  if ((ret=lbnl_controller_get_all_offsets (dfd, dacs, &ndacs))!=0){
+	    printf ("ERROR %d\n",ret);
+	  }
+	  pdebug ("daemon: dac[0] %d %f\n", dacs[0].address, dacs[0].tvalue);
+	}
+	response.status = ret;
+	sprintf (response.strmsg, "OK");
+
+	for (off_idx = 0; off_idx < ndacs; off_idx++)
+	  {
+	    dac_vals[off_idx] = dacs[off_idx].telemetry;
+	    //dac_vals[off_idx] = dacs[off_idx].tvalue;
+	  }
+
+	 if ((ret = send (fdin, dac_vals, ndacs*sizeof (f32),0)) == -1)
+	    printf ("error sending data %d\n", ret);
+	free(dacs);		/* Avoid memory leak */
+	free(dac_vals);
 	break;
       case LBNL_GET_NOFF:
 	//          printf ("cmd: GET_NOFF\n");
