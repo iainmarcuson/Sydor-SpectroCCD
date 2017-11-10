@@ -46,6 +46,16 @@ static u32 exp_time;		/* Holds the total exposure time */
 static u32 exp_time_elapsed;	/* How much of an exposure time has elapsed */
 static u32 exp_abort;		/* Flag to abort an exposure during the 
 				 exposure time */
+
+
+/* Exposure Parameters */
+struct Exposure_Parameters
+{
+  int acq_mode;			/* Acquisition mode e.g. continuous */
+  int ccd_clear;		/* Whether to clear in continuous mode */
+};
+typedef struct Exposure_Parameters exp_param_t;
+
 int main(int argc, char **argv)
 {
   int              connfd, len;
@@ -156,7 +166,7 @@ void *thread_main(void *arg)
   char *data_ptr;
   i32 count_cfg_args;
   int sem_status;
-
+  exp_param_t *exp_args;
 
   //  dacresp_t dacresp;
 
@@ -1220,7 +1230,11 @@ void *thread_main(void *arg)
 	img_acq_state = Not_Started;
 	pthread_mutex_unlock(&acq_state_mutex);
 
-	pthread_create(&acq_thread, NULL, &pt_take_picture, NULL);
+	exp_args = (exp_param_t *)malloc(sizeof(exp_param_t));
+	exp_args->acq_mode = message.data[0];
+	exp_args->ccd_clear = message.data[1];
+
+	pthread_create(&acq_thread, NULL, &pt_take_picture, exp_args);
 	sprintf( response.strmsg, "DONE");
 	send(fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
@@ -1519,14 +1533,23 @@ void *pt_take_fits(void *arg)
 void *pt_take_picture(void * arg)
 {
   int wait_status = 0;
+  exp_param_t *exp_args = (exp_param_t *)arg;
   //TODO FIXME Add clearing logic and update status variable
   //TODO Change behavior based on return from waiting
   //TODO Make abort flag thread safe?
 
-  pthread_mutex_lock(&acq_state_mutex);
-  img_acq_state = Clearing;
-  pthread_mutex_unlock(&acq_state_mutex);
-  lbnl_ccd_clear(dfd);
+  /* DEBUGGING REMOVETHIS */
+  printf("Acquisition mode %i, clear ccd %i.\n",
+  	 exp_args->acq_mode, exp_args->ccd_clear);
+
+  if ((exp_args->acq_mode != 2) || ((exp_args->acq_mode == 2) && (exp_args->ccd_clear)))
+    {
+      printf("****************\nClearing CCD\n****************\n");
+      pthread_mutex_lock(&acq_state_mutex);
+      img_acq_state = Clearing;
+      pthread_mutex_unlock(&acq_state_mutex);
+      lbnl_ccd_clear(dfd);
+    }
 
   pthread_mutex_lock(&acq_state_mutex);
   img_acq_state = Exposing;
@@ -1553,6 +1576,7 @@ void *pt_take_picture(void * arg)
  end_exp:
   sem_post(&acq_state);
 
+  free(arg);
   return NULL;
 }
 
