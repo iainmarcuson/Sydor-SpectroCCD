@@ -646,6 +646,200 @@ int lbnl_ccd_read (dref fd, u16 imageData[])
 }
 
 
+int lbnl_ccd_read_down (dref fd, u16 imageData[]) /*Azriel test routine to get the other one-sided readout */
+{
+  ccd_read_progress = 0;
+  int error = 0;
+  error = lbnl_check_lock(fd);
+  if (error != 0) {
+    return (error);
+  }
+  printf ("lib: reading ccd Down\n");
+  int i;
+  u32 control_register, status_register;
+  u32 timeout =0, size = 1024;
+  u32 rowIndex, columnIndex, pixels, old_bufferstate;
+  u16 rows, columns;
+  u32 tempdata,offset,index;
+  u16 tmpchanna, tmpchannb;
+  i16 tmpchannas, tmpchannbs;
+  double duration;
+  struct timespec tstart={0,0}, tend={0,0};
+  memory ccd_statemachine;
+  memory videobuffer;
+  int value;
+
+#ifdef READ_BENCHMARK
+  // Benchmark
+  FILE *benchmark;
+  if ((benchmark = fopen("/media/sambashare/benchmark.csv", "w")) == NULL ) {
+    printf("Failed to open file\n");
+    return FAILED;
+  }
+  fprintf(benchmark, "start,end,div\n");
+#endif
+
+  rowIndex=columnIndex=index=0; //reset image location
+  lbnl_ccd_get_size(fd, &columns, &rows);
+  pixels = ( columns * rows ) / 4;
+
+  error  = ccd_mem_open(&ccd_statemachine, CCD_STATE_ADDR, size);
+  error += ccd_mem_open(&videobuffer, VIDEOMEM_ADDR, VIDEOMEM_SIZE);
+
+/* code from the clear that will be changed to use the dummy address */
+  //value = (ccd_mem_read(&ccd_statemachine, 4) & 0xfc00ffff)   | (read_down_address_ccd<<16); //set dummy (down read) start address in timing state machine
+  //XXX FIXME changed previous line to default_read_down_address
+  value = (ccd_mem_read(&ccd_statemachine, 4) & 0xfc00ffff)   | (default_read_down_address<<16); //set dummy (down read) start address in timing state machine
+  ccd_mem_write(&ccd_statemachine, 4, value);
+  control_register = ccd_mem_read(&ccd_statemachine, 0);
+  control_register |= 0x6; /* Azriel force the reading out bit on */
+  ccd_mem_write(&ccd_statemachine, 0, control_register);	// trigger read down
+/* end block */
+
+  status_register = ccd_mem_read(&ccd_statemachine, STATUS_OFFSET);
+  while ( status_register & 0x8){	// CCD idle mode(read out has not started)
+    lbnl_sleep_ms(1);
+    status_register = ccd_mem_read(&ccd_statemachine, STATUS_OFFSET) ;	// update register
+    timeout++;
+    if (timeout ==10000){ //increased timeout to 10s for sync
+      ccd_mem_write(&ccd_statemachine, 0, control_register &= ~0x6);	// clear trigger bit
+      error += ccd_mem_close(&videobuffer);
+      error += ccd_mem_close(&ccd_statemachine);
+      printf("lib: timeout at read start =%d/n",timeout);
+      return(TIMEOUT);
+    }
+  }//CCD is now reading out
+  ccd_mem_write(&ccd_statemachine, 0, control_register &= ~0x2);	// clear trigger bit
+
+  // poll
+  old_bufferstate =0;//readout starts, all buffers empty
+  timeout = 0;
+  printf ("lib: readout started (%dx%d)\n", columns, rows);
+  clock_gettime(CLOCK_MONOTONIC, &tstart);
+  while (control_register & 4){ //readout pending
+    //	    control_register = ccd_mem_read(&ccd_statemachine, 0);
+    //		timeout++;
+    //		if (control_register & 0x80){		//if abort bit set
+    //			control_register &= ~0x4; // clear pending bit
+    //			control_register |= (3<<8);	//set reset state machine bit
+    //			ccd_mem_write(&ccd_statemachine, 0, control_register);
+    //			spi_checksum_wait(100000); //wait for reset to happen
+    //			control_register &= 0xfc7f;		//clear reset state machine, abort bits
+    //			ccd_mem_write(&ccd_statemachine, 0, control_register);
+    //			error += ccd_mem_close(&videobuffer);
+    //			error += ccd_mem_close(&ccd_statemachine);
+    //			return(ABORT);
+    //		}
+    //		if (timeout == 100000){
+    //			control_register &= ~0x4; // clear pending bit
+    //			control_register |= (3<<8);	//set reset state machine bit
+    //			ccd_mem_write(&ccd_statemachine, 0, control_register);
+    //			spi_checksum_wait(100000); //wait for reset to happen
+    //			control_register &= 0xfc7f;		//clear reset state machine, abort bits
+    //			ccd_mem_write(&ccd_statemachine, 0, control_register);
+    //			error += ccd_mem_close(&videobuffer);
+    //			error += ccd_mem_close(&ccd_statemachine);
+    //			return(TIMEOUT);
+    //		}
+    //		lbnl_sleep_us(1); //sleep to slow hits between register access
+
+    status_register = ccd_mem_read(&ccd_statemachine, STATUS_OFFSET);
+    if(  ((status_register & 7) != old_bufferstate)){
+      if(((status_register&3)==0 )||((status_register&3)==3 )){ //need to move data from buffer to DDR RAM
+	printf("status %d \n",status_register);
+      }
+      //if buffer state is 0 or 3 the register is not stable, wait and re-read
+      timeout = 0;
+      old_bufferstate = status_register & 3;
+      if(old_bufferstate >1){
+	offset =(VIDEOMEM_SIZE/2);	// choose buffer: 0*offset or 1*offset
+      }else{
+	offset=0;
+      }
+
+#ifdef BENCHMARK_READ
+      // benchmark start
+      struct timespec tstart={0,0}, tend={0,0};
+      clock_gettime(CLOCK_MONOTONIC, &tstart);
+#endif
+      for(i = 0; index < (pixels) && i < (VIDEOMEM_SIZE/16); ++index, i++ , columnIndex++){
+	if (columnIndex == (columns>>1)){
+	  rowIndex++;
+	  ccd_read_progress = 2*rowIndex;
+	  columnIndex = 0;
+	}
+
+	//				tempdata = *((unsigned *)(videobuffer.ptr + videobuffer.page_offset + offset+(i*8)));
+	//				imageData[columns * rows-1 - (columns*rowIndex) - columnIndex] = tempdata&0xffff; //CH1
+	//				imageData[columns * (rows-1) - (columns*rowIndex)+ columnIndex] =  tempdata>>16; // CH3 i+1 used for testing quadrant1
+
+	//				tempdata = *((unsigned *)(videobuffer.ptr + videobuffer.page_offset + offset+(i*8)+4));
+	//				imageData[rowIndex * columns + columnIndex] =  tempdata>>16; //CH4
+	//				imageData[rowIndex * columns + columns - columnIndex -1] = tempdata &0xffff; //CH2
+
+	tempdata = *((u32 *)(videobuffer.ptr + videobuffer.page_offset + offset+(i*8)));
+	tmpchanna = tempdata&0xffff;
+	tmpchannas = *((i16 *) &tmpchanna);
+	tmpchannb = tempdata>>16;
+	tmpchannbs = *((i16 *) &tmpchannb);
+	//	code before the new controller with spectroccd v0
+	//	imageData[columns * rows-1 - (columns*rowIndex) - columnIndex] =  tmpchannas + 32768u; //CH1
+	//	imageData[columns * (rows-1) - (columns*rowIndex)+ columnIndex] = tmpchannbs + 32768u; // CH3 i+1 used for testing quadrant1
+
+		// Azriel new variant to correct orientation with new controller and spectroccd V0 Aug 2017
+		imageData[columns * rows-1 - (columns*rowIndex) - columnIndex] =  tmpchannas + 32768u;
+		imageData[rowIndex * columns + columns - columnIndex -1] = tmpchannbs + 32768u;
+
+		tempdata = *((u32 *)(videobuffer.ptr + videobuffer.page_offset + offset+(i*8)+4));
+		tmpchanna = tempdata&0xffff;
+		tmpchannas = *((i16 *) &tmpchanna);
+		tmpchannb = tempdata>>16;
+		tmpchannbs = *((i16 *) &tmpchannb);
+	//	code before the new controller with spectroccd v0
+	//	imageData[rowIndex * columns + columnIndex] =  tmpchannbs + 32768u; //CH4
+	//	imageData[rowIndex * columns + columns - columnIndex -1] = tmpchannas + 32768u; //CH2
+
+		// Azriel new variant to correct orientation with new controller and spectroccd V0 Aug 2017
+		imageData[columns * (rows-1) - (columns*rowIndex)+ columnIndex] = tmpchannbs + 32768u;
+		imageData[rowIndex * columns + columnIndex] = tmpchannas + 32768u;
+
+
+      }
+#ifdef BENCHMARK_READ
+      // Benchmark end
+      clock_gettime(CLOCK_MONOTONIC, &tend);
+      fprintf(benchmark, "%.9f,%.9f,%.9f\n",
+	      (double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec,
+	      (double)tend.tv_sec + 1.0e-9*tend.tv_nsec,
+	      ((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) -
+	      ((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
+#endif
+     if(status_register & 4){ //image ready bit is set
+    	  if(1){//(index <10000){
+    		  clock_gettime(CLOCK_MONOTONIC, &tend);
+    		  printf( "time to trigger:%.9f ",	((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) -((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
+    		  printf("timeout=%d,status=%d,control=%d,index=%d/n",timeout,status_register,control_register,index);
+    	  }
+    	  control_register &= ~(1<<2); // clear pending bit
+    	  ccd_mem_write(&ccd_statemachine, 0, control_register);
+    	  rowIndex=columnIndex=index=0; //reset image location
+     }
+    }else{
+      lbnl_sleep_us(100); //sleep if no transfer was needed
+    }
+  }
+
+  error += ccd_mem_close(&videobuffer);
+  error += ccd_mem_close(&ccd_statemachine);
+
+#ifdef BENCHMARK_READ
+  // Benchmark
+  fclose(benchmark);
+#endif
+  return(error);
+}
+
+
 
 /**
  * starts exposure and reads the image buffer

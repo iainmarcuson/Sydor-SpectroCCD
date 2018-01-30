@@ -14,7 +14,7 @@ int got_sigterm=0;
 int listenfd;
 dref dfd;
 unsigned int bsize;
-u16 *imbuffer;
+u16 *imbuffer, *up_buffer, *down_buffer;
 static image_num=0;
 static u32 cfg_gain;
 
@@ -114,13 +114,17 @@ int allocate_buffer (int nbytes)
     return (0);
   if (imbuffer != NULL) {
     free (imbuffer);
+    free (up_buffer);
+    free (down_buffer);
     bsize = 0;
     imbuffer = NULL;
   }
   //	imbuffer = (unsigned short *) malloc (nbytes);
   imbuffer = (i16 *) malloc (nbytes);
+  up_buffer = (i16 *) malloc (nbytes);
+  down_buffer = (i16 *) malloc (nbytes);
   //	*imbuffer = 121;
-  if (imbuffer == NULL)
+  if ((imbuffer == NULL) || (up_buffer == NULL) || (down_buffer == NULL))
     return (-ENOMEM);
   bsize = nbytes;
   return (0);
@@ -1596,6 +1600,13 @@ void *pt_take_picture(void * arg)
 {
   int wait_status = 0;
   exp_param_t *exp_args = (exp_param_t *)arg;
+  u16 *half_buffer[2];		/* Point to the upper (0) and 
+				   lower (1) buffers */
+  int updown_idx;		/* Whether we are iterating over up or down
+				   buffer */
+  int end_row, half_row;	/* Last and half-rows of image */
+  int row_idx, col_idx;		/* Indices for copying from one buffer
+				   to imbuffer */
   //TODO FIXME Add clearing logic and update status variable
   //TODO Change behavior based on return from waiting
   //TODO Make abort flag thread safe?
@@ -1603,41 +1614,90 @@ void *pt_take_picture(void * arg)
   //Be sure to detach the thread on completion
   pthread_detach(pthread_self());
 
+  /* Assign the buffer pointers */
+  half_buffer[0] = up_buffer;
+  half_buffer[1] = down_buffer;
+  
   /* DEBUGGING REMOVETHIS */
   printf("Acquisition mode %i, clear ccd %i.\n",
   	 exp_args->acq_mode, exp_args->ccd_clear);
 
-  if ((exp_args->acq_mode != 2) || ((exp_args->acq_mode == 2) && (exp_args->ccd_clear)))
+
+  for (updown_idx=0; updown_idx<2; updown_idx++)
     {
-      printf("****************\nClearing CCD\n****************\n");
+      if ((exp_args->acq_mode != 2) || ((exp_args->acq_mode == 2) && (exp_args->ccd_clear)))
+	{
+	  printf("****************\nClearing CCD\n****************\n");
+	  pthread_mutex_lock(&acq_state_mutex);
+	  img_acq_state = Clearing;
+	  pthread_mutex_unlock(&acq_state_mutex);
+	  lbnl_ccd_clear(dfd);
+	}
+      
       pthread_mutex_lock(&acq_state_mutex);
-      img_acq_state = Clearing;
+      img_acq_state = Exposing;
       pthread_mutex_unlock(&acq_state_mutex);
-      lbnl_ccd_clear(dfd);
+      wait_status = wait_exposure_time();
+      
+      if (wait_status)
+	{
+	  exp_abort = 0;		/* Clear abort flag so we do not trigger
+					   on next run.  This also allows an abort on
+					   the other steps to trigger here.*/
+	  goto end_exp;		/* Exposure aborted */
+	}
+      
+      pthread_mutex_lock(&acq_state_mutex);
+      img_acq_state = Readout;
+      pthread_mutex_unlock(&acq_state_mutex);
+      if (updown_idx == 0)
+	{
+	  lbnl_ccd_read(dfd, half_buffer[updown_idx]);
+	}
+      else
+	{
+	  lbnl_ccd_read_down(dfd, half_buffer[updown_idx]);
+	}
+
+      printf("&&&&&&&&&&&&&&&&&&&&&&Performing iteration %i of updown.\n",updown_idx);
+      
     }
 
-  pthread_mutex_lock(&acq_state_mutex);
-  img_acq_state = Exposing;
-  pthread_mutex_unlock(&acq_state_mutex);
-  wait_status = wait_exposure_time();
+  /* Now assemble the image from the top half of up_buffer and the bottom 
+     half of down_buffer */
+  end_row = img_size_y;
+  half_row = end_row/2;
 
-  if (wait_status)
+  for (row_idx = 0; row_idx < half_row; row_idx ++)
     {
-      exp_abort = 0;		/* Clear abort flag so we do not trigger
-				 on next run.  This also allows an abort on
-				the other steps to trigger here.*/
-      goto end_exp;		/* Exposure aborted */
+      for (col_idx = 0; col_idx < img_size_x; col_idx++)
+	{
+	  int buffer_pix;
+
+	  buffer_pix = (row_idx*img_size_x) + col_idx;
+	  imbuffer[buffer_pix] = up_buffer[buffer_pix];
+	}
+      printf("#################\nCopying row from upper half.\n###################\n");
     }
 
-  pthread_mutex_lock(&acq_state_mutex);
-  img_acq_state = Readout;
-  pthread_mutex_unlock(&acq_state_mutex);
-  lbnl_ccd_read(dfd, imbuffer);
+  for (row_idx = half_row; row_idx < end_row; row_idx ++)
+    {
+      for (col_idx = 0; col_idx < img_size_x; col_idx++)
+	{
+	  int buffer_pix;
 
+	  buffer_pix = (row_idx*img_size_x) + col_idx;
+	  imbuffer[buffer_pix] = down_buffer[buffer_pix];
+	}
+      printf("@@@@@@@@@@@@@@@@@@@@\nCopying row from lower half.\n@@@@@@@@@@@@@@@@@@@@@@@@\n");
+    }
+
+  
+  /* TODO Add state changes as we progress through multi-stage read */
   pthread_mutex_lock(&acq_state_mutex);
   img_acq_state = Done;
   pthread_mutex_unlock(&acq_state_mutex);
-
+    
  end_exp:
   sem_post(&acq_state);
 
@@ -1656,7 +1716,7 @@ void *pt_read_picture(void *arg)
   int curr_bytes_sent, total_bytes_sent=0;
 
   //Be sure to detach the thread on completion
-    pthread_detach(pthread_self());
+  pthread_detach(pthread_self());
 
 
   //XXX TODO Robustify Eliminate magic numbers

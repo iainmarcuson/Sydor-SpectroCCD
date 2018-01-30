@@ -11,6 +11,7 @@ int lbnl_ccd_clear (dref fd);
 int lbnl_ccd_erase (dref fd);
 int lbnl_ccd_purge (dref fd);
 int lbnl_ccd_read (dref fd, u16 image_data[]);
+int lbnl_ccd_read_down (dref fd, u16 image_data[]);
 int lbnl_readout_get_data (dref fd, u16 *bufptr);
 int lbnl_readout_prepare (dref fd);
 int lbnl_readout_discard (dref fd);

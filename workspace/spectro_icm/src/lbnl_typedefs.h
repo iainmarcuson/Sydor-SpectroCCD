@@ -80,6 +80,7 @@ static const float offsetBuffGains[8] = { 1.0,1.0,1.0,1.0,  1.0,1.0,1.0,1.0 };
 #define  default_read_address 32
 #define  default_clear_address 96
 #define  default_dummy_address 128
+#define  default_read_down_address 256 /*new*/
 
 // Default erase and purge parameters (provided by Armin)
 #define default_Erase_Vclk_voltage  11.0   // Volts
