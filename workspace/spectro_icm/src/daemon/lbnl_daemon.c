@@ -167,8 +167,10 @@ void *thread_main(void *arg)
   i32 count_cfg_args;
   int sem_status;
   exp_param_t *exp_args;
-
+  int cfg_line_valid;		/* Determine if a cfg file line 
+				   has been parsed properly*/
   //  dacresp_t dacresp;
+  int create_thread_ret;	/* Check return status of pthread_create()*/
 
   do {
     if ((cin=recv(fdin,&message,sizeof(cmdstruct_t), 0))!=sizeof(cmdstruct_t)){
@@ -525,22 +527,69 @@ void *thread_main(void *arg)
 	    data_ptr = strstr(config_line, "|");
 	    if (!data_ptr)	/* Special functions occur on non-data lines */
 	      {
-		/* REMOVETHIS  DEBUGGING */
-		printf("Special line is:\n %s\n",config_line);
+		/* XXX Not thread-safe */
+		unsigned int temp_img_size_x;
+		unsigned int temp_img_size_y;
+		/* TODO Add in handling of error codes in return */
+		cfg_line_valid = 0;
+		
 		count_cfg_args = sscanf(config_line,"Enable: %u %x %x ",
 					&enable_num, &enable_dacmask, &enable_clkmask);
-		/* REMOVETHIS DEBUGGING */
-		printf("Read %i arguments.\n", count_cfg_args);
-		printf("Enable params %u 0X%X 0x%X\n",
-		       enable_num, enable_dacmask, enable_clkmask); 
-
-		/* Parse exposure time */
-		count_cfg_args = sscanf(config_line, "ExpTime: %u ", &exp_time);
-		/* REMOVETHIS DEBUGGING */
-		/*if ((count_cfg_args == 1) || 1)
+		if (count_cfg_args == 3)
 		  {
-		    printf("Exposure time is %u.\n", exp_time);
-		    }*/
+		    /* Correctly parsed Enable line */
+		    cfg_line_valid = 1;
+		    if (enable_num > 1)
+		      {
+			/* Set to default */
+			enable_dacmask = DACMASK;
+			enable_clkmask = CLKMASK;
+		      }
+		    else if (enable_num == 0)
+		      {
+			/* Disable masks */
+			enable_dacmask = 0;
+			enable_clkmask = 0;
+		      }
+		    else
+		      {
+			/* Use values unchanged */
+		      }
+
+		    /* TODO Add in error support */
+		    /* Write the values to the hardware */
+		    lbnl_controller_enable(dfd, enable_dacmask, enable_clkmask);
+		  }
+
+		count_cfg_args = sscanf(config_line, "ExpTime: %u ", &exp_time);
+		if (count_cfg_args == 1)
+		  {
+		    /* A correctly parsed Exposure Time line*/
+		    cfg_line_valid = 1;
+		  }
+
+		count_cfg_args = sscanf(config_line, "ImgSize: %u %u ", &temp_img_size_x, &temp_img_size_y);
+		if (count_cfg_args == 2)
+		  {
+		    /* Correctly parsed image size */
+		    /* TODO Add error handling for set, allocate, and handling zero bytes */
+		    cfg_line_valid = 1;
+		    int nbytes;
+		    img_size_x = temp_img_size_x;
+		    img_size_y = temp_img_size_y;
+		    lbnl_ccd_set_size(dfd, temp_img_size_x, temp_img_size_y);
+		    nbytes = img_size_x * img_size_y * BPP;
+		    if (nbytes > 0)
+		      {
+			allocate_buffer (nbytes);
+		      }
+		  }
+
+		if (!cfg_line_valid)
+		  {
+		    /* TODO add error handling */
+		    printf("Unrecognized config line:\n %s\n", config_line);
+		  }
 	      }
 	  }
 	fclose(cfg_file);
@@ -906,6 +955,11 @@ void *thread_main(void *arg)
 	    iaux2 = message.data[2];
 	  }
 
+	/* Harmonize CTRL_ENABLE and FLOAD_CFG file variables */
+	enable_dacmask = iaux1;
+	enable_clkmask = iaux2;
+	enable_num = message.data[0];
+	
 	if ((ret=lbnl_controller_enable (dfd, iaux1, iaux2))!=0){
 	  printf ("ERROR %d\n",ret);
 	  sprintf (response.strmsg, "ERROR %d\n",ret);
@@ -1234,8 +1288,16 @@ void *thread_main(void *arg)
 	exp_args->acq_mode = message.data[0];
 	exp_args->ccd_clear = message.data[1];
 
-	pthread_create(&acq_thread, NULL, &pt_take_picture, exp_args);
-	sprintf( response.strmsg, "DONE");
+	create_thread_ret = pthread_create(&acq_thread, NULL, &pt_take_picture, exp_args);
+	if (create_thread_ret == 0)
+	{
+		sprintf( response.strmsg, "DONE");
+	}
+	else
+	{
+		perror("pthread_create error: ");
+		sprintf( response.strmsg, "THREAD_FAIL");
+	}
 	send(fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
       case LBNL_IMG_READ:
@@ -1538,6 +1600,9 @@ void *pt_take_picture(void * arg)
   //TODO Change behavior based on return from waiting
   //TODO Make abort flag thread safe?
 
+  //Be sure to detach the thread on completion
+  pthread_detach(pthread_self());
+
   /* DEBUGGING REMOVETHIS */
   printf("Acquisition mode %i, clear ccd %i.\n",
   	 exp_args->acq_mode, exp_args->ccd_clear);
@@ -1589,7 +1654,11 @@ void *pt_read_picture(void *arg)
   pthread_mutex_unlock(&acq_state_mutex);
 
   int curr_bytes_sent, total_bytes_sent=0;
-      
+
+  //Be sure to detach the thread on completion
+    pthread_detach(pthread_self());
+
+
   //XXX TODO Robustify Eliminate magic numbers
   while (total_bytes_sent < (img_size_x*img_size_y*sizeof(imbuffer[0])))
     {
