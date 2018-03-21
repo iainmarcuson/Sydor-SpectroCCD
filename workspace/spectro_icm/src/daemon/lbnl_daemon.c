@@ -730,11 +730,14 @@ void *thread_main(void *arg)
 	break;
       case LBNL_CCD_CLEAR:
 	printf ("cmd: Clear\n");
-	if ((ret=lbnl_ccd_clear (dfd))!=0){
-	  printf ("ERROR %d\n",ret);
-	  sprintf (response.strmsg, "ERROR %d\n",ret);
+	if ((ret=lbnl_ccd_clear_up_or_down (dfd, 1))!=0){
+		printf ("ERROR %d\n",ret);
+		sprintf (response.strmsg, "ERROR %d\n",ret);
+	} else if ((ret=lbnl_ccd_clear_up_or_down (dfd, 2))!=0){
+		printf ("ERROR %d\n",ret);
+		sprintf (response.strmsg, "ERROR %d\n",ret);
 	} else
-	  sprintf (response.strmsg, "DONE");
+		sprintf (response.strmsg, "DONE");
 	response.status = ret;
 	send (fdin, (void *)&response, sizeof (respstruct_t),0);
 	break;
@@ -765,7 +768,7 @@ void *thread_main(void *arg)
 	printf ("taking image\n");
 	usleep (1000);
 	if (artif_data==0){
-	  if ((ret=lbnl_ccd_read (dfd, imbuffer))!=0){
+	  if ((ret=lbnl_ccd_read_up_or_down (dfd, imbuffer, 3))!=0){
 	    printf ("ERROR acquiring %d\n",ret);
 	    sprintf (response.strmsg, "ERROR acquiring %d\n",ret);
 	  } else {
@@ -1560,7 +1563,7 @@ void *pt_take_fits(void *arg)
   //TODO Make thread safe?
   exp_abort = 0;		/* Clear old abort command, if any */
   wait_exposure_time();
-  if ((ret=lbnl_ccd_read(dfd, imbuffer))!=0)
+  if ((ret=lbnl_ccd_read_up_or_down(dfd, imbuffer, 3))!=0)
     {
       printf ("ERROR acquiring %d\n",ret);
       //sprintf (response.strmsg, "ERROR acquiring %d\n",ret);
@@ -1623,7 +1626,8 @@ void *pt_take_picture(void * arg)
   	 exp_args->acq_mode, exp_args->ccd_clear);
 
 
-  for (updown_idx=0; updown_idx<2; updown_idx++)
+//  for (updown_idx=0; updown_idx<2; updown_idx++)
+  for (updown_idx=0; updown_idx<1; updown_idx++)
     {
       if ((exp_args->acq_mode != 2) || ((exp_args->acq_mode == 2) && (exp_args->ccd_clear)))
 	{
@@ -1631,7 +1635,13 @@ void *pt_take_picture(void * arg)
 	  pthread_mutex_lock(&acq_state_mutex);
 	  img_acq_state = Clearing;
 	  pthread_mutex_unlock(&acq_state_mutex);
-	  lbnl_ccd_clear(dfd);
+	  if (updown_idx==0) {
+		  lbnl_ccd_clear_up_or_down(dfd, 1);
+		  lbnl_ccd_clear_up_or_down(dfd, 2);
+	  } else if (updown_idx==1) {
+		  lbnl_ccd_clear_up_or_down(dfd, 2);
+		  lbnl_ccd_clear_up_or_down(dfd, 1);
+	  }
 	}
       
       pthread_mutex_lock(&acq_state_mutex);
@@ -1652,11 +1662,12 @@ void *pt_take_picture(void * arg)
       pthread_mutex_unlock(&acq_state_mutex);
       if (updown_idx == 0)
 	{
-	  lbnl_ccd_read(dfd, half_buffer[updown_idx]);
+//	  lbnl_ccd_read_up_or_down(dfd, half_buffer[updown_idx], 1);
+    	  lbnl_ccd_read_up_or_down(dfd, half_buffer[updown_idx], 3);
 	}
       else
 	{
-	  lbnl_ccd_read_down(dfd, half_buffer[updown_idx]);
+	  lbnl_ccd_read_up_or_down(dfd, half_buffer[updown_idx], 2);
 	}
 
       printf("&&&&&&&&&&&&&&&&&&&&&&Performing iteration %i of updown.\n",updown_idx);
@@ -1687,7 +1698,8 @@ void *pt_take_picture(void * arg)
 	  int buffer_pix;
 
 	  buffer_pix = (row_idx*img_size_x) + col_idx;
-	  imbuffer[buffer_pix] = down_buffer[buffer_pix];
+//	  imbuffer[buffer_pix] = down_buffer[buffer_pix];
+	  imbuffer[buffer_pix] = up_buffer[buffer_pix];
 	}
       printf("@@@@@@@@@@@@@@@@@@@@\nCopying row from lower half.\n@@@@@@@@@@@@@@@@@@@@@@@@\n");
     }
