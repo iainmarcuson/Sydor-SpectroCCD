@@ -18,6 +18,8 @@ u16 *imbuffer, *up_buffer, *down_buffer;
 static image_num=0;
 static u32 cfg_gain;
 
+static fix_idx=0;
+static fix_imbuf_idx=0;
 //Image size
 static u32 img_size_x, img_size_y;
 
@@ -1688,7 +1690,7 @@ void *pt_take_picture(void * arg)
 	  buffer_pix = (row_idx*img_size_x) + col_idx;
 	  imbuffer[buffer_pix] = up_buffer[buffer_pix];
 	}
-      printf("#################\nCopying row from upper half.\n###################\n");
+      //printf("#################\nCopying row from upper half.\n###################\n");
     }
 
   for (row_idx = half_row; row_idx < end_row; row_idx ++)
@@ -1701,7 +1703,7 @@ void *pt_take_picture(void * arg)
 //	  imbuffer[buffer_pix] = down_buffer[buffer_pix];
 	  imbuffer[buffer_pix] = up_buffer[buffer_pix];
 	}
-      printf("@@@@@@@@@@@@@@@@@@@@\nCopying row from lower half.\n@@@@@@@@@@@@@@@@@@@@@@@@\n");
+      //printf("@@@@@@@@@@@@@@@@@@@@\nCopying row from lower half.\n@@@@@@@@@@@@@@@@@@@@@@@@\n");
     }
 
   
@@ -1720,6 +1722,9 @@ void *pt_take_picture(void * arg)
 void *pt_read_picture(void *arg)
 {
   int fdin = *((int *) arg);
+  int pix_x, pix_y;
+  const BOARD_SIZE = 50;
+
   //FIXME TODO Update status variable as progress is made
   pthread_mutex_lock(&acq_state_mutex);
   img_acq_state = Sending;
@@ -1730,6 +1735,22 @@ void *pt_read_picture(void *arg)
   //Be sure to detach the thread on completion
   pthread_detach(pthread_self());
 
+  for (fix_imbuf_idx=0; fix_imbuf_idx<(img_size_x*img_size_y); fix_imbuf_idx++)
+    {
+      pix_x = fix_imbuf_idx%img_size_x;
+      pix_y = fix_imbuf_idx/img_size_x;
+
+      if ((((pix_x/BOARD_SIZE)%2)^((pix_y/BOARD_SIZE)%2)^(fix_idx))==0)
+	{
+	  imbuffer[fix_imbuf_idx]=54321;
+	}
+      else
+	{
+	  imbuffer[fix_imbuf_idx]=12345;
+	}
+    }
+
+  fix_idx = (fix_idx+1)%2;	/* Alternate between two values */
 
   //XXX TODO Robustify Eliminate magic numbers
   while (total_bytes_sent < (img_size_x*img_size_y*sizeof(imbuffer[0])))
