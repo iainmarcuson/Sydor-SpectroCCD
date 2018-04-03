@@ -27,6 +27,9 @@ static pthread_t acq_thread, read_thread, fits_thread;
 static enum ImgAcqStatus img_acq_state;
 static pthread_mutex_t acq_state_mutex;
 
+//Image variables
+static int img_count_reset;	/* Count of images since last reset */
+
 void *pt_take_picture(void *arg);
 void *pt_read_picture(void *arg);
 void *pt_take_fits(void *arg);
@@ -62,6 +65,10 @@ int main(int argc, char **argv)
   socklen_t        clilen, addrlen;
   struct sockaddr_in address,remote;
   pthread_t        tid;
+
+
+  /* Clear image counter variable at startup */
+  img_count_reset = 0; 
 
   //Register the parameters into the config variable
   lbnl_register_params();
@@ -1509,7 +1516,12 @@ void *thread_main(void *arg)
 	printf("img_acq_state is %i.\n", response.data[0]);
 	send(fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
-	
+
+      case LBNL_GET_IMG_CNT:
+	sprintf(response.strmsg, "DONE");
+	response.data[0] = img_count_reset;
+	send(fdin, (void *)&response, sizeof(respstruct_t),0);
+	break;
       default:
 	sprintf (response.strmsg, "ERROR unknown cmd %d\n",message.cmd);
 	response.status = -EINVAL;
@@ -1670,7 +1682,7 @@ void *pt_take_picture(void * arg)
 	  lbnl_ccd_read_up_or_down(dfd, half_buffer[updown_idx], 2);
 	}
 
-      printf("&&&&&&&&&&&&&&&&&&&&&&Performing iteration %i of updown.\n",updown_idx);
+      //printf("&&&&&&&&&&&&&&&&&&&&&&Performing iteration %i of updown.\n",updown_idx);
       
     }
 
@@ -1688,7 +1700,7 @@ void *pt_take_picture(void * arg)
 	  buffer_pix = (row_idx*img_size_x) + col_idx;
 	  imbuffer[buffer_pix] = up_buffer[buffer_pix];
 	}
-      printf("#################\nCopying row from upper half.\n###################\n");
+      //printf("#################\nCopying row from upper half.\n###################\n");
     }
 
   for (row_idx = half_row; row_idx < end_row; row_idx ++)
@@ -1701,9 +1713,11 @@ void *pt_take_picture(void * arg)
 //	  imbuffer[buffer_pix] = down_buffer[buffer_pix];
 	  imbuffer[buffer_pix] = up_buffer[buffer_pix];
 	}
-      printf("@@@@@@@@@@@@@@@@@@@@\nCopying row from lower half.\n@@@@@@@@@@@@@@@@@@@@@@@@\n");
+      //printf("@@@@@@@@@@@@@@@@@@@@\nCopying row from lower half.\n@@@@@@@@@@@@@@@@@@@@@@@@\n");
     }
 
+  /* Increment image counter */
+  img_count_reset++;
   
   /* TODO Add state changes as we progress through multi-stage read */
   pthread_mutex_lock(&acq_state_mutex);
