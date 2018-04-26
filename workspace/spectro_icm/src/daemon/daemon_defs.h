@@ -27,8 +27,10 @@ void  exit_cleanly(void);
 #define DEFFITSPATH	"/tmp/image.fits"
 #define DEFCFGPATH	"/data/ccd.cfg"
 
-#define FTIMPATH	"/data/timfilename.txt"
-#define FCFGPATH	"/data/cfgfilename.txt"
+//#define FTIMPATH	"/data/timfilename.txt"
+//#define FCFGPATH	"/data/cfgfilename.txt"
+#define FTIMPATH "/root/spectro_daemon/timfilename.txt"
+#define FCFGPATH "/root/spectro_daemon/cfgfilename.txt"
 
 /*-----------------------------------------------------------------------------
 | Externals

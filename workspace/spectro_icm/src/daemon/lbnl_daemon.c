@@ -1350,6 +1350,8 @@ void *thread_main(void *arg)
 	lbnl_ccd_idle(dfd, 1);
 	//lbnl_close(dfd);
 	response.status=0;
+	/* XXX Should probably have a semaphore on below line */
+	img_count_reset = 0;
 	send(fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
       case LBNL_CMD_ENABLE:
