@@ -20,6 +20,7 @@ static u32 cfg_gain;
 
 //Image size
 static u32 img_size_x, img_size_y;
+static u32 ccd_size_x, ccd_size_y;  //Size of the active area, before overscan
 
 //Image acquisition and readout thread variables
 static sem_t acq_state;
@@ -51,6 +52,9 @@ static u32 exp_abort;		/* Flag to abort an exposure during the
 				 exposure time */
 
 
+// Read-out mode parameters
+static u32 b_read_fast; // High to read fast
+
 /* Exposure Parameters */
 struct Exposure_Parameters
 {
@@ -69,6 +73,9 @@ int main(int argc, char **argv)
 
   /* Clear image counter variable at startup */
   img_count_reset = 0; 
+
+  // Set to regular readout mode
+  b_read_fast = 0;
 
   //Register the parameters into the config variable
   lbnl_register_params();
@@ -594,6 +601,13 @@ void *thread_main(void *arg)
 		      {
 			allocate_buffer (nbytes);
 		      }
+		  }
+
+		count_cfg_args = sscanf(config_line, "CCDSize: %u %u ",
+					&ccd_size_x, &ccd_size_y);
+		if (count_cfg_args == 2)
+		  {
+		    cfg_line_valid=1;
 		  }
 
 		if (!cfg_line_valid)
@@ -1524,6 +1538,19 @@ void *thread_main(void *arg)
 	response.data[0] = img_count_reset;
 	send(fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
+      case LBNL_GET_IMG_HALF:
+	printf("cmd: LBNL_GET_IMG_HALF: %i\n",b_read_fast);
+	sprintf(response.strmsg, "DONE");
+	response.data[0] = b_read_fast;
+	send(fdin, (void *)&response, sizeof(respstruct_t),0);
+	break;
+      case LBNL_SET_IMG_HALF:
+	printf("cmd: LBNL_SET_IMG_HALF: %i\n",message.data[0]);
+	b_read_fast = message.data[0];
+	sprintf(response.strmsg, "DONE");
+	response.data[0] = 0;
+	send(fdin, (void *)&response, sizeof(respstruct_t),0);
+	break;
       default:
 	sprintf (response.strmsg, "ERROR unknown cmd %d\n",message.cmd);
 	response.status = -EINVAL;
@@ -1640,8 +1667,8 @@ void *pt_take_picture(void * arg)
   	 exp_args->acq_mode, exp_args->ccd_clear);
 
 
-//  for (updown_idx=0; updown_idx<2; updown_idx++)
-  for (updown_idx=0; updown_idx<1; updown_idx++)
+  for (updown_idx=0; updown_idx<2; updown_idx++)
+    //for (updown_idx=0; updown_idx<1; updown_idx++)
     {
       if ((exp_args->acq_mode != 2) || ((exp_args->acq_mode == 2) && (exp_args->ccd_clear)))
 	{
@@ -1650,11 +1677,11 @@ void *pt_take_picture(void * arg)
 	  img_acq_state = Clearing;
 	  pthread_mutex_unlock(&acq_state_mutex);
 	  if (updown_idx==0) {
-		  lbnl_ccd_clear_up_or_down(dfd, 1);
-		  lbnl_ccd_clear_up_or_down(dfd, 2);
+	    lbnl_ccd_clear_up_or_down(dfd, 1);
+	    lbnl_ccd_clear_up_or_down(dfd, 2);
 	  } else if (updown_idx==1) {
-		  lbnl_ccd_clear_up_or_down(dfd, 2);
-		  lbnl_ccd_clear_up_or_down(dfd, 1);
+	    lbnl_ccd_clear_up_or_down(dfd, 2);
+	    lbnl_ccd_clear_up_or_down(dfd, 1);
 	  }
 	}
       
@@ -1676,16 +1703,20 @@ void *pt_take_picture(void * arg)
       pthread_mutex_unlock(&acq_state_mutex);
       if (updown_idx == 0)
 	{
-//	  lbnl_ccd_read_up_or_down(dfd, half_buffer[updown_idx], 1);
-    	  lbnl_ccd_read_up_or_down(dfd, half_buffer[updown_idx], 3);
+	  lbnl_ccd_read_up_or_down(dfd, half_buffer[updown_idx], 1);
+    	  //lbnl_ccd_read_up_or_down(dfd, half_buffer[updown_idx], 3);
 	}
       else
 	{
 	  lbnl_ccd_read_up_or_down(dfd, half_buffer[updown_idx], 2);
 	}
-
-      //printf("&&&&&&&&&&&&&&&&&&&&&&Performing iteration %i of updown.\n",updown_idx);
       
+      //printf("&&&&&&&&&&&&&&&&&&&&&&Performing iteration %i of updown.\n",updown_idx);
+      /* Break if doing fast read */
+      if ( b_read_fast)		/* Fast-read */
+	{
+	  break;		/* Stop after one iteration */
+	}
     }
 
   /* Now assemble the image from the top half of up_buffer and the bottom 
@@ -1693,6 +1724,18 @@ void *pt_take_picture(void * arg)
   end_row = img_size_y;
   half_row = end_row/2;
 
+  // Blank out destination array
+  for (row_idx=0; row_idx<img_size_y; row_idx++)
+    {
+      for (col_idx =0; col_idx<img_size_y; col_idx++)
+	{
+	  int buf_pixel;
+	  buf_pixel = row_idx*img_size_x+col_idx;
+	  imbuffer[buf_pixel]=0;
+	}
+    }
+  
+  /* Copy upper half */
   for (row_idx = 0; row_idx < half_row; row_idx ++)
     {
       for (col_idx = 0; col_idx < img_size_x; col_idx++)
@@ -1705,17 +1748,57 @@ void *pt_take_picture(void * arg)
       //printf("#################\nCopying row from upper half.\n###################\n");
     }
 
-  for (row_idx = half_row; row_idx < end_row; row_idx ++)
+  /* Copy lower half or copy upper-half into lower half, depending on read mode */
+  if (!b_read_fast)		/* Ordinary read */
     {
-      for (col_idx = 0; col_idx < img_size_x; col_idx++)
+      for (row_idx = half_row; row_idx < end_row; row_idx ++)
 	{
-	  int buffer_pix;
-
-	  buffer_pix = (row_idx*img_size_x) + col_idx;
-//	  imbuffer[buffer_pix] = down_buffer[buffer_pix];
-	  imbuffer[buffer_pix] = up_buffer[buffer_pix];
+	  for (col_idx = 0; col_idx < img_size_x; col_idx++)
+	    {
+	      int buffer_pix;
+	      
+	      buffer_pix = (row_idx*img_size_x) + col_idx;
+	      imbuffer[buffer_pix] = down_buffer[buffer_pix];
+	      //imbuffer[buffer_pix] = up_buffer[buffer_pix];
+	    }
+	  //printf("@@@@@@@@@@@@@@@@@@@@\nCopying row from lower half.\n@@@@@@@@@@@@@@@@@@@@@@@@\n");
 	}
-      //printf("@@@@@@@@@@@@@@@@@@@@\nCopying row from lower half.\n@@@@@@@@@@@@@@@@@@@@@@@@\n");
+    }
+  else				/* b_read_fast true, fast read */
+    {
+      int upper_row_idx, bottom_row_idx;
+      int upper_col_idx, bottom_col_idx;
+      int half_col = img_size_x/2;
+      int overscan_offset;
+
+      overscan_offset = (img_size_y-ccd_size_y*2)/2;
+
+      for (row_idx=0; row_idx<half_row; row_idx++)
+	{
+	  upper_row_idx = row_idx; //Copy from top half to bottom half, with
+	  //offset for overscan
+	  bottom_row_idx = ((row_idx+overscan_offset)%half_row)+half_row;
+	  /* Copy lower-left to lower right */
+	  for (upper_col_idx = 0; upper_col_idx < half_col; upper_col_idx++)
+	    {
+	      int upper_buffer_pix, bottom_buffer_pix;
+	      bottom_col_idx = img_size_x-1-upper_col_idx;
+	      upper_buffer_pix = upper_row_idx*img_size_x+upper_col_idx;
+	      bottom_buffer_pix = bottom_row_idx*img_size_x+bottom_col_idx;
+
+	      imbuffer[bottom_buffer_pix] = up_buffer[upper_buffer_pix];
+	    }
+	  /* Copy lower-right to lower left */
+	   for (upper_col_idx = half_col; upper_col_idx < img_size_x; upper_col_idx++)
+	    {
+	      int upper_buffer_pix, bottom_buffer_pix;
+	      bottom_col_idx = half_col-1-(upper_col_idx-half_col);
+	      upper_buffer_pix = upper_row_idx*img_size_x+upper_col_idx;
+	      bottom_buffer_pix = bottom_row_idx*img_size_x+bottom_col_idx;
+
+	      imbuffer[bottom_buffer_pix] = up_buffer[upper_buffer_pix];
+	    }
+	}
     }
 
   /* Increment image counter */
