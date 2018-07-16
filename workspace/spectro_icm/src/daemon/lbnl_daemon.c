@@ -1651,6 +1651,9 @@ void *pt_take_picture(void * arg)
   int end_row, half_row;	/* Last and half-rows of image */
   int row_idx, col_idx;		/* Indices for copying from one buffer
 				   to imbuffer */
+  const int READ_DOUBLE = 0;	/* Read up, then down */
+  const int READ_INTERLEAVED = 1; /* Read interleaved */
+  const int READ_SINGLE_DIRECTION = 2; /* Read only up */
   //TODO FIXME Add clearing logic and update status variable
   //TODO Change behavior based on return from waiting
   //TODO Make abort flag thread safe?
@@ -1666,63 +1669,118 @@ void *pt_take_picture(void * arg)
   printf("Acquisition mode %i, clear ccd %i.\n",
   	 exp_args->acq_mode, exp_args->ccd_clear);
 
-
-  for (updown_idx=0; updown_idx<2; updown_idx++)
-    //for (updown_idx=0; updown_idx<1; updown_idx++)
+  /* Branch depending on Read Mode */
+  if (b_read_fast == READ_DOUBLE)
     {
-      if ((exp_args->acq_mode != 2) || ((exp_args->acq_mode == 2) && (exp_args->ccd_clear)))
+      for (updown_idx=0; updown_idx<2; updown_idx++) /* 0 Read up, 1 read down */
 	{
-	  printf("****************\nClearing CCD\n****************\n");
+	  if (exp_args->ccd_clear)
+	    {
+	      printf("****************\nClearing CCD\n****************\n");
+	      pthread_mutex_lock(&acq_state_mutex);
+	      img_acq_state = Clearing;
+	      pthread_mutex_unlock(&acq_state_mutex);
+	      if (updown_idx==0) {
+		/* Reading up, so clearing up. */
+		lbnl_ccd_clear_up_or_down(dfd, 1);
+		
+	      } else if (updown_idx==1) {
+		/* Reading down, so clearing down */
+		lbnl_ccd_clear_up_or_down(dfd, 2);
+		
+	      }
+	    }
+	  
+	  pthread_mutex_lock(&acq_state_mutex);
+	  img_acq_state = Exposing;
+	  pthread_mutex_unlock(&acq_state_mutex);
+	  wait_status = wait_exposure_time();
+	  
+	  if (wait_status)
+	    {
+	      exp_abort = 0;		/* Clear abort flag so we do not trigger
+					   on next run.  This also allows an abort on
+					   the other steps to trigger here.*/
+	      goto end_exp;		/* Exposure aborted */
+	    }
+	  
+	  pthread_mutex_lock(&acq_state_mutex);
+	  img_acq_state = Readout;
+	  pthread_mutex_unlock(&acq_state_mutex);
+	  if (updown_idx == 0)
+	    {
+	      lbnl_ccd_read_up_or_down(dfd, half_buffer[updown_idx], 1);
+	      /* Read up */
+	    }
+	  else
+	    {
+	      lbnl_ccd_read_up_or_down(dfd, half_buffer[updown_idx], 2);
+	      /* Read down */
+	    }
+	  
+	  //printf("&&&&&&&&&&&&&&&&&&&&&&Performing iteration %i of updown.\n",updown_idx);
+	}
+    }
+  else if (b_read_fast == READ_INTERLEAVED) /* Interleaved read */
+    {
+      if (exp_args->ccd_clear)
+	{
+	  printf("*************\nClearing CCD\n***************\n");
 	  pthread_mutex_lock(&acq_state_mutex);
 	  img_acq_state = Clearing;
 	  pthread_mutex_unlock(&acq_state_mutex);
-	  if (updown_idx==0) {
-	    lbnl_ccd_clear_up_or_down(dfd, 1);
-	    lbnl_ccd_clear_up_or_down(dfd, 2);
-	  } else if (updown_idx==1) {
-	    lbnl_ccd_clear_up_or_down(dfd, 2);
-	    lbnl_ccd_clear_up_or_down(dfd, 1);
-	  }
+	  lbnl_ccd_clear_up_or_down(dfd, 3);
 	}
-      
+
       pthread_mutex_lock(&acq_state_mutex);
       img_acq_state = Exposing;
       pthread_mutex_unlock(&acq_state_mutex);
       wait_status = wait_exposure_time();
-      
+
       if (wait_status)
 	{
-	  exp_abort = 0;		/* Clear abort flag so we do not trigger
-					   on next run.  This also allows an abort on
-					   the other steps to trigger here.*/
-	  goto end_exp;		/* Exposure aborted */
+	  exp_abort = 0;	/* Clear abort flag so we do not trigger on 
+				 next run.  This also allows an abort on 
+				the other steps to trigger here.*/
+	  goto end_exp;
 	}
-      
+
       pthread_mutex_lock(&acq_state_mutex);
       img_acq_state = Readout;
       pthread_mutex_unlock(&acq_state_mutex);
-      if (updown_idx == 0)
+      lbnl_ccd_read_up_or_down(dfd, half_buffer[0], 3); /* Read up, into up buffer */
+    }
+  else 				/* Single direction read, specifically UP */
+    {
+      if (exp_args->ccd_clear)
 	{
-	  lbnl_ccd_read_up_or_down(dfd, half_buffer[updown_idx], 1);
-    	  //lbnl_ccd_read_up_or_down(dfd, half_buffer[updown_idx], 3);
+	  printf("*****************\nClearing CCD\n**************\n");
+	  pthread_mutex_lock(&acq_state_mutex);
+	  img_acq_state = Clearing;
+	  pthread_mutex_unlock(&acq_state_mutex);
+	  lbnl_ccd_clear_up_or_down(dfd, 1);
 	}
-      else
+
+      pthread_mutex_lock(&acq_state_mutex);
+      img_acq_state = Exposing;
+      pthread_mutex_unlock(&acq_state_mutex);
+      wait_status = wait_exposure_time();
+
+      if (wait_status)
 	{
-	  lbnl_ccd_read_up_or_down(dfd, half_buffer[updown_idx], 2);
+	  exp_abort = 0;	/* Clear abort flag so we do not trigger on 
+				 next run.  This also allows an abort on
+				the other steps to trigger here.*/
+	  goto end_exp;
 	}
-      
-      //printf("&&&&&&&&&&&&&&&&&&&&&&Performing iteration %i of updown.\n",updown_idx);
-      /* Break if doing fast read */
-      if ( b_read_fast)		/* Fast-read */
-	{
-	  break;		/* Stop after one iteration */
-	}
+
+      pthread_mutex_lock(&acq_state_mutex);
+      img_acq_state = Readout;
+      pthread_mutex_unlock(&acq_state_mutex);
+      lbnl_ccd_read_up_or_down(dfd, half_buffer[0], 1); /* Read up, into up buffer */
     }
 
-  /* Now assemble the image from the top half of up_buffer and the bottom 
-     half of down_buffer */
-  end_row = img_size_y;
-  half_row = end_row/2;
+  /* Assemble the image according to the read mode */
 
   // Blank out destination array
   for (row_idx=0; row_idx<img_size_y; row_idx++)
@@ -1734,6 +1792,12 @@ void *pt_take_picture(void * arg)
 	  imbuffer[buf_pixel]=0;
 	}
     }
+
+  /* Top half of the image is always the same */
+
+  end_row = img_size_y;
+  half_row = end_row/2;
+
   
   /* Copy upper half */
   for (row_idx = 0; row_idx < half_row; row_idx ++)
@@ -1741,17 +1805,19 @@ void *pt_take_picture(void * arg)
       for (col_idx = 0; col_idx < img_size_x; col_idx++)
 	{
 	  int buffer_pix;
-
+	  
 	  buffer_pix = (row_idx*img_size_x) + col_idx;
 	  imbuffer[buffer_pix] = up_buffer[buffer_pix];
 	}
       //printf("#################\nCopying row from upper half.\n###################\n");
     }
+  
 
-  /* Copy lower half or copy upper-half into lower half, depending on read mode */
-  if (!b_read_fast)		/* Ordinary read */
+  /* Now branch based on read mode  */
+  if (b_read_fast == READ_DOUBLE)
     {
-      for (row_idx = half_row; row_idx < end_row; row_idx ++)
+      /* Assemble the image from the bottom half of the down buffer */
+      for (row_idx = half_row; row_idx < end_row; row_idx++)
 	{
 	  for (col_idx = 0; col_idx < img_size_x; col_idx++)
 	    {
@@ -1759,20 +1825,35 @@ void *pt_take_picture(void * arg)
 	      
 	      buffer_pix = (row_idx*img_size_x) + col_idx;
 	      imbuffer[buffer_pix] = down_buffer[buffer_pix];
-	      //imbuffer[buffer_pix] = up_buffer[buffer_pix];
 	    }
 	  //printf("@@@@@@@@@@@@@@@@@@@@\nCopying row from lower half.\n@@@@@@@@@@@@@@@@@@@@@@@@\n");
 	}
     }
-  else				/* b_read_fast true, fast read */
+  else if (b_read_fast == READ_INTERLEAVED) /* Interleaved read */
     {
+      /* Copy bottom half of image from bottom half of up buffer, since data
+	 were all read into up_buffer */
+      for (row_idx = half_row; row_idx < end_row; row_idx++)
+	{
+	  for (col_idx = 0; col_idx < img_size_x; col_idx++)
+	    {
+	      int buffer_pix;
+	      buffer_pix = (row_idx*img_size_x)+col_idx;
+	      imbuffer[buffer_pix] = up_buffer[buffer_pix];
+	    }
+	}
+    }
+  else 				/* Unidirectional read */
+    {
+      /* Clone upper half into lower half */
+
       int upper_row_idx, bottom_row_idx;
       int upper_col_idx, bottom_col_idx;
       int half_col = img_size_x/2;
       int overscan_offset;
-
+      
       overscan_offset = (img_size_y-ccd_size_y*2)/2;
-
+      
       for (row_idx=0; row_idx<half_row; row_idx++)
 	{
 	  upper_row_idx = row_idx; //Copy from top half to bottom half, with
@@ -1785,22 +1866,24 @@ void *pt_take_picture(void * arg)
 	      bottom_col_idx = img_size_x-1-upper_col_idx;
 	      upper_buffer_pix = upper_row_idx*img_size_x+upper_col_idx;
 	      bottom_buffer_pix = bottom_row_idx*img_size_x+bottom_col_idx;
-
+	      
 	      imbuffer[bottom_buffer_pix] = up_buffer[upper_buffer_pix];
 	    }
 	  /* Copy lower-right to lower left */
-	   for (upper_col_idx = half_col; upper_col_idx < img_size_x; upper_col_idx++)
+	  for (upper_col_idx = half_col; upper_col_idx < img_size_x; upper_col_idx++)
 	    {
 	      int upper_buffer_pix, bottom_buffer_pix;
 	      bottom_col_idx = half_col-1-(upper_col_idx-half_col);
 	      upper_buffer_pix = upper_row_idx*img_size_x+upper_col_idx;
 	      bottom_buffer_pix = bottom_row_idx*img_size_x+bottom_col_idx;
-
+	      
 	      imbuffer[bottom_buffer_pix] = up_buffer[upper_buffer_pix];
 	    }
 	}
     }
 
+    
+        
   /* Increment image counter */
   img_count_reset++;
   
