@@ -108,6 +108,7 @@
 #define LBNL_GET_IMG_CNT 180
 #define LBNL_SET_IMG_HALF 190
 #define LBNL_GET_IMG_HALF 191
+#define LBNL_GET_CCDSIZE 200
 
 //XXX FIXME TODO
 //Below are aggregated commands.  Make separate commands.

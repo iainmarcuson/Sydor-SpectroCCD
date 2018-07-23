@@ -1551,6 +1551,13 @@ void *thread_main(void *arg)
 	response.data[0] = 0;
 	send(fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
+      case LBNL_GET_CCDSIZE:
+	printf("cmd: LBNL_GET_CCDSIZE: %i %i\n", ccd_size_x, ccd_size_y);
+	sprintf(response.strmsg, "DONE");
+	response.data[0] = ccd_size_x;
+	response.data[1] = ccd_size_y;
+	send(fdin, (void *)&response, sizeof(respstruct_t),0);
+	break;
       default:
 	sprintf (response.strmsg, "ERROR unknown cmd %d\n",message.cmd);
 	response.status = -EINVAL;
