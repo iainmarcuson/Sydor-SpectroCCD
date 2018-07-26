@@ -274,6 +274,7 @@ void *thread_main(void *arg)
 	response.data[1] = (u32) aux2;
 	img_size_x = (u32) aux1;
 	img_size_y = (u32) aux2;
+	printf("Retrieved image size %i, %i.\n", aux1, aux2);
 	send (fdin, (void *)&response, sizeof (respstruct_t),0);
 	break;
       case LBNL_GET_REG:
@@ -1661,6 +1662,8 @@ void *pt_take_picture(void * arg)
   const int READ_DOUBLE = 0;	/* Read up, then down */
   const int READ_INTERLEAVED = 1; /* Read interleaved */
   const int READ_SINGLE_DIRECTION = 2; /* Read only up */
+  const int FLIP_UNIDIR = 0;	       /* Whether to perform horiz flip for
+					  uni-directional clear.  */
   //TODO FIXME Add clearing logic and update status variable
   //TODO Change behavior based on return from waiting
   //TODO Make abort flag thread safe?
@@ -1792,7 +1795,7 @@ void *pt_take_picture(void * arg)
   // Blank out destination array
   for (row_idx=0; row_idx<img_size_y; row_idx++)
     {
-      for (col_idx =0; col_idx<img_size_y; col_idx++)
+      for (col_idx =0; col_idx<img_size_x; col_idx++)
 	{
 	  int buf_pixel;
 	  buf_pixel = row_idx*img_size_x+col_idx;
@@ -1859,33 +1862,68 @@ void *pt_take_picture(void * arg)
       int half_col = img_size_x/2;
       int overscan_offset;
       
-      overscan_offset = (img_size_y-ccd_size_y*2)/2;
+      overscan_offset = (half_row-ccd_size_y);
       
-      for (row_idx=0; row_idx<half_row; row_idx++)
+      if (FLIP_UNIDIR)
 	{
-	  upper_row_idx = row_idx; //Copy from top half to bottom half, with
-	  //offset for overscan
-	  bottom_row_idx = ((row_idx+overscan_offset)%half_row)+half_row;
-	  /* Copy lower-left to lower right */
-	  for (upper_col_idx = 0; upper_col_idx < half_col; upper_col_idx++)
+	  for (row_idx=0; row_idx<half_row; row_idx++)
 	    {
-	      int upper_buffer_pix, bottom_buffer_pix;
-	      bottom_col_idx = img_size_x-1-upper_col_idx;
-	      upper_buffer_pix = upper_row_idx*img_size_x+upper_col_idx;
-	      bottom_buffer_pix = bottom_row_idx*img_size_x+bottom_col_idx;
-	      
-	      imbuffer[bottom_buffer_pix] = up_buffer[upper_buffer_pix];
+	      upper_row_idx = row_idx; //Copy from top half to bottom half, with
+	      //offset for overscan
+	      bottom_row_idx = ((row_idx+overscan_offset)%half_row)+half_row;
+	      /* Copy lower-left to lower right */
+	      for (upper_col_idx = 0; upper_col_idx < half_col; upper_col_idx++)
+		{
+		  int upper_buffer_pix, bottom_buffer_pix;
+		  bottom_col_idx = img_size_x-1-upper_col_idx;
+		  upper_buffer_pix = upper_row_idx*img_size_x+upper_col_idx;
+		  bottom_buffer_pix = bottom_row_idx*img_size_x+bottom_col_idx;
+		  
+		  imbuffer[bottom_buffer_pix] = up_buffer[upper_buffer_pix];
+		}
+	      /* Copy lower-right to lower left */
+	      for (upper_col_idx = half_col; upper_col_idx < img_size_x; upper_col_idx++)
+		{
+		  int upper_buffer_pix, bottom_buffer_pix;
+		  bottom_col_idx = half_col-1-(upper_col_idx-half_col);
+		  upper_buffer_pix = upper_row_idx*img_size_x+upper_col_idx;
+		  bottom_buffer_pix = bottom_row_idx*img_size_x+bottom_col_idx;
+		  
+		  imbuffer[bottom_buffer_pix] = up_buffer[upper_buffer_pix];
+		}
 	    }
-	  /* Copy lower-right to lower left */
-	  for (upper_col_idx = half_col; upper_col_idx < img_size_x; upper_col_idx++)
+	}
+      else			/* Not flipping horizontally */
+	{
+	  for (row_idx=0; row_idx<half_row; row_idx++)
 	    {
-	      int upper_buffer_pix, bottom_buffer_pix;
-	      bottom_col_idx = half_col-1-(upper_col_idx-half_col);
-	      upper_buffer_pix = upper_row_idx*img_size_x+upper_col_idx;
-	      bottom_buffer_pix = bottom_row_idx*img_size_x+bottom_col_idx;
-	      
-	      imbuffer[bottom_buffer_pix] = up_buffer[upper_buffer_pix];
+	      upper_row_idx = row_idx; //Copy from top half to bottom half, with
+	      //offset for overscan
+	      bottom_row_idx = ((row_idx+overscan_offset)%half_row)+half_row;
+	      /* Copy lower-left to lower left */
+	      for (upper_col_idx = 0; upper_col_idx < half_col; upper_col_idx++)
+		{
+		  int upper_buffer_pix, bottom_buffer_pix;
+		  //bottom_col_idx = img_size_x-1-upper_col_idx;
+		  bottom_col_idx = upper_col_idx;
+		  upper_buffer_pix = upper_row_idx*img_size_x+upper_col_idx;
+		  bottom_buffer_pix = bottom_row_idx*img_size_x+bottom_col_idx;
+		  
+		  imbuffer[bottom_buffer_pix] = up_buffer[upper_buffer_pix];
+		}
+	      /* Copy lower-right to lower right */
+	      for (upper_col_idx = half_col; upper_col_idx < img_size_x; upper_col_idx++)
+		{
+		  int upper_buffer_pix, bottom_buffer_pix;
+		  //bottom_col_idx = half_col-1-(upper_col_idx-half_col);
+		  bottom_col_idx = upper_col_idx;
+		  upper_buffer_pix = upper_row_idx*img_size_x+upper_col_idx;
+		  bottom_buffer_pix = bottom_row_idx*img_size_x+bottom_col_idx;
+		  
+		  imbuffer[bottom_buffer_pix] = up_buffer[upper_buffer_pix];
+		}
 	    }
+	
 	}
     }
 
