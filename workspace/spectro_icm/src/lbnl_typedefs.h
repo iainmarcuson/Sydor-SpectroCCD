@@ -66,6 +66,13 @@
 #define NDELAYS         16
 #define EPICS_STRLEN 41
 
+//Azriel add definition for shutter behavior control
+#define SHUTTER_CLOSE 1
+#define SHUTTER_OPEN 0
+#define SHUTTER_MODE_NORMAL 0
+#define SHUTTER_MODE_OPEN 1
+#define SHUTTER_MODE_CLOSED 2
+
 static const float clk_buffergain	=4.77;
 static const float clk_hvbuffgain	=190.22;
 static const float clk_adc_gain 	=	0.0064;

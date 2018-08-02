@@ -1740,7 +1740,21 @@ int lbnl_controller_get_autoshutter (dref fd, i8 *autoshutter)
  **/
 int lbnl_controller_set_shutter (dref fd, i8 shut)
 {
-  return (DONE);
+  unsigned int address = GPIO_ADDR;
+  u32 value = 0x20;		// shutter is on gpio(5)--
+  unsigned int size = 1024;
+  u32 regval;
+  int error=0;
+  
+  value = (value * shut)& 0x30; //allow aux shutter on gpio(6)
+  memory gpio;
+  error = ccd_mem_open(&gpio, address, size);
+  regval = ccd_mem_read(&gpio,0);
+  regval = (regval & 0xffffff9f)|value; //clear shutter bits, overwrite with shut value
+  ccd_mem_write(&gpio, 0, regval);
+  error += ccd_mem_close(&gpio);
+  return(error);
+  
 }
 
 /**
@@ -1751,7 +1765,18 @@ int lbnl_controller_set_shutter (dref fd, i8 shut)
  **/
 int lbnl_controller_get_shutter (dref fd, i8 *shut)
 {
-  return (DONE);
+  unsigned int address = GPIO_ADDR;
+  unsigned int size = 1024;
+  u32 regval;
+  int error=0;
+  
+  memory gpio;
+  error = ccd_mem_open(&gpio, address, size);
+  regval = ccd_mem_read(&gpio,0);
+  error += ccd_mem_close(&gpio);
+  shut = (regval >> 5)&0x3;
+  return(error);
+
 }
 
 /*IMPORTANT: the next ones are low level, engineering ones, and they may not be 

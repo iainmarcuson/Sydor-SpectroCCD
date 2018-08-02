@@ -109,6 +109,7 @@
 #define LBNL_SET_IMG_HALF 190
 #define LBNL_GET_IMG_HALF 191
 #define LBNL_GET_CCDSIZE 200
+#define LBNL_SET_SHUTTERMODE 210
 
 //XXX FIXME TODO
 //Below are aggregated commands.  Make separate commands.

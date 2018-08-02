@@ -34,6 +34,7 @@ static int img_count_reset;	/* Count of images since last reset */
 void *pt_take_picture(void *arg);
 void *pt_read_picture(void *arg);
 void *pt_take_fits(void *arg);
+void set_shutter(int new_state);
 
 //TODO ultimately can be aborted
 int wait_exposure_time();	/* Waits for a exposure time */
@@ -54,6 +55,13 @@ static u32 exp_abort;		/* Flag to abort an exposure during the
 
 // Read-out mode parameters
 static u32 b_read_fast; // High to read fast
+
+/* Shutter-mode */
+static u32 shutter_mode;	/* TODO Maybe add in shutter status var */
+/* See also "Take as BG" options */
+
+static u32 take_as_bg = 0;
+
 
 /* Exposure Parameters */
 struct Exposure_Parameters
@@ -1559,6 +1567,46 @@ void *thread_main(void *arg)
 	response.data[1] = ccd_size_y;
 	send(fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
+      case LBNL_SET_SHUTTERMODE:
+	printf("cmd: LBNL_SET_SHUTTERMODE: %i\n", message.data[0]);
+	sprintf(response.strmsg, "DONE"); /* Override on error below */
+	if (message.data[0] == SHUTTER_MODE_NORMAL)
+	  {
+	    shutter_mode = SHUTTER_MODE_NORMAL;
+	    /* TODO Set according to exposure state */
+	    if (take_as_bg == 0) /* Background, so leave shutter closed */
+	      {
+		lbnl_controller_set_shutter(dfd, 0);
+	      }
+	    else		/* Not taking as background, so set according to state */
+	      {
+		pthread_mutex_lock(&acq_state_mutex); /* Check state and lock */
+		if (img_acq_state == Exposing)	      /* Exposing, so open shutter */
+		  {
+		    lbnl_controller_set_shutter(dfd, 1); /*Open - 1, Closed - 0  */
+		  }
+		else 		/* Not exposing, so close */
+		  {
+		    lbnl_controller_set_shutter(dfd, 1); /*Open - 1, Closed - 0  */
+		  }
+		pthread_mutex_unlock(&acq_state_mutex);
+	      }
+	  }
+	else if (message.data[0] == SHUTTER_MODE_OPEN)
+	  {
+	    shutter_mode = SHUTTER_MODE_OPEN;
+	    lbnl_controller_set_shutter(dfd, 1); /* Open shutter */
+	  }
+	else if (message.data[0] == SHUTTER_MODE_CLOSED)
+	  {
+	    shutter_mode = SHUTTER_MODE_CLOSED;
+	    lbnl_controller_set_shutter(dfd, 0);
+	  }
+	else			/* Error condition */
+	  {
+	    sprintf (response.strmsg, "Invalid shutter mode %i.\n", message.data[0]);
+	  }
+	send (fdin, (void *)&response, sizeof(response), 0);
       default:
 	sprintf (response.strmsg, "ERROR unknown cmd %d\n",message.cmd);
 	response.status = -EINVAL;
@@ -1679,6 +1727,9 @@ void *pt_take_picture(void * arg)
   printf("Acquisition mode %i, clear ccd %i.\n",
   	 exp_args->acq_mode, exp_args->ccd_clear);
 
+  set_shutter(SHUTTER_CLOSE); /* Close shutter, modified automaticall by mode */
+
+
   /* Branch depending on Read Mode */
   if (b_read_fast == READ_DOUBLE)
     {
@@ -1705,7 +1756,7 @@ void *pt_take_picture(void * arg)
 	  img_acq_state = Exposing;
 	  pthread_mutex_unlock(&acq_state_mutex);
 	  wait_status = wait_exposure_time();
-	  
+	  set_shutter(SHUTTER_OPEN);
 	  if (wait_status)
 	    {
 	      exp_abort = 0;		/* Clear abort flag so we do not trigger
@@ -1714,6 +1765,8 @@ void *pt_take_picture(void * arg)
 	      goto end_exp;		/* Exposure aborted */
 	    }
 	  
+	  set_shutter(SHUTTER_CLOSE);
+
 	  pthread_mutex_lock(&acq_state_mutex);
 	  img_acq_state = Readout;
 	  pthread_mutex_unlock(&acq_state_mutex);
@@ -1745,6 +1798,8 @@ void *pt_take_picture(void * arg)
       pthread_mutex_lock(&acq_state_mutex);
       img_acq_state = Exposing;
       pthread_mutex_unlock(&acq_state_mutex);
+
+      set_shutter(SHUTTER_OPEN);
       wait_status = wait_exposure_time();
 
       if (wait_status)
@@ -1754,6 +1809,9 @@ void *pt_take_picture(void * arg)
 				the other steps to trigger here.*/
 	  goto end_exp;
 	}
+      
+      set_shutter(SHUTTER_CLOSE);
+
 
       pthread_mutex_lock(&acq_state_mutex);
       img_acq_state = Readout;
@@ -1774,6 +1832,9 @@ void *pt_take_picture(void * arg)
       pthread_mutex_lock(&acq_state_mutex);
       img_acq_state = Exposing;
       pthread_mutex_unlock(&acq_state_mutex);
+
+      set_shutter(SHUTTER_OPEN);
+
       wait_status = wait_exposure_time();
 
       if (wait_status)
@@ -1784,6 +1845,7 @@ void *pt_take_picture(void * arg)
 	  goto end_exp;
 	}
 
+      set_shutter(SHUTTER_CLOSE);
       pthread_mutex_lock(&acq_state_mutex);
       img_acq_state = Readout;
       pthread_mutex_unlock(&acq_state_mutex);
@@ -2052,4 +2114,27 @@ int wait_exposure_time()
     }
 
   return 0;			/* All went well */
+}
+
+/* Set shutter, taking into account shutter mode and "Take as BG" mode */
+void set_shutter(int new_state)
+{
+  if (shutter_mode == SHUTTER_MODE_OPEN || shutter_mode == SHUTTER_MODE_CLOSED) /* Forcing mode */
+    {
+      /* Do nothing */
+      return;
+    }
+
+  if (take_as_bg)		/* Taking background image */
+    {
+      /* Close the shutter */
+      lbnl_controller_set_shutter(dfd, 0);
+      return;
+    }
+  else				/* Normal mode and not bg */
+    {
+      lbnl_controller_set_shutter(dfd, new_state);
+      return;
+    }
+  
 }
