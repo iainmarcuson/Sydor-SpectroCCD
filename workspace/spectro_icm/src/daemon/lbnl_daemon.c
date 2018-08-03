@@ -1641,6 +1641,19 @@ void *thread_main(void *arg)
 	sprintf(response.strmsg, "DONE");
 	send (fdin, (void *)&response, sizeof(response), 0);
 	break;
+      case LBNL_SET_BG:
+	printf("LBNL_SET_BG: %i\n", message.data[0]);
+	if (message.data[0])
+	  {
+	    take_as_bg = 1;
+	  }
+	else
+	  {
+	    take_as_bg = 0;
+	  }
+	sprintf(response.strmsg, "DONE");
+	send (fdin, (void *)&response, sizeof(response), 0);
+	break;
       default:
 	sprintf (response.strmsg, "ERROR unknown cmd %d\n",message.cmd);
 	response.status = -EINVAL;

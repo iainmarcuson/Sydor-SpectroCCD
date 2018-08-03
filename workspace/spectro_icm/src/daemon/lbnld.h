@@ -111,6 +111,7 @@
 #define LBNL_GET_CCDSIZE 200
 #define LBNL_SET_SHUTTERMODE 210
 #define LBNL_SET_FAST_MODE 220
+#define LBNL_SET_BG 230
 
 //XXX FIXME TODO
 //Below are aggregated commands.  Make separate commands.
