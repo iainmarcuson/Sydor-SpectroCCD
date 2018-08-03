@@ -68,6 +68,8 @@ static f32 dac_vals[NDACS];
 static f32 offset_vals[NOFFSETS];
 static int delay_vals[NDELAYS];
 
+
+
 //globals for config
 static u32 cfg_gain=5;
 

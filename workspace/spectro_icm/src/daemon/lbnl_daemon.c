@@ -63,6 +63,15 @@ static u32 shutter_mode;	/* TODO Maybe add in shutter status var */
 static u32 take_as_bg = 0;
 
 
+/* Globals for normal- and fast-mode config settings */
+/* May need to add mutex for coherency */
+static cds_t daemon_cds_normal, daemon_cds_fast;
+static delays_t daemon_ccd_delay_normal, daemon_ccd_delay_fast;
+static u32 b_video_mode;		/* Used for very fast acquisition */
+
+void populate_slow_mode(cds_t *curr_cds, delays_t *curr_delays);
+void populate_fast_mode(const cds_t *cds_normal, const delays_t *ccd_delay_normal, cds_t *cds_fast, delays_t *ccd_delay_fast);
+
 /* Exposure Parameters */
 struct Exposure_Parameters
 {
@@ -627,6 +636,12 @@ void *thread_main(void *arg)
 	      }
 	  }
 	fclose(cfg_file);
+	/* Prepare fast and slow structs for later fast mode */
+	printf("Populating slow and fast modes.\n");
+	populate_slow_mode(&daemon_cds_normal, &daemon_ccd_delay_normal);
+	populate_fast_mode(&daemon_cds_normal, &daemon_ccd_delay_normal,
+			   &daemon_cds_fast, &daemon_ccd_delay_fast);
+
 	response.status = ret;
 	send (fdin, (void *)&response, sizeof (respstruct_t),0);
 	break;
@@ -1607,6 +1622,24 @@ void *thread_main(void *arg)
 	    sprintf (response.strmsg, "Invalid shutter mode %i.\n", message.data[0]);
 	  }
 	send (fdin, (void *)&response, sizeof(response), 0);
+      case LBNL_SET_FAST_MODE:
+	printf("LBNL_FAST_MODE: %i.\n", message.data[0]);
+	if (message.data[0] == 0) /* Normal mode */
+	  {
+	    lbnl_controller_set_cds(dfd, daemon_cds_normal);
+	    lbnl_controller_set_delays(dfd, daemon_ccd_delay_normal);
+	    b_video_mode = 0;
+	  }
+	else			/* Fast mode */
+	  {
+	    lbnl_controller_set_cds(dfd, daemon_cds_fast);
+	    lbnl_controller_set_delays(dfd, daemon_ccd_delay_fast);
+	    b_video_mode = 1;
+	  }
+	
+	sprintf(response.strmsg, "DONE");
+	send (fdin, (void *)&response, sizeof(response), 0);
+	break;
       default:
 	sprintf (response.strmsg, "ERROR unknown cmd %d\n",message.cmd);
 	response.status = -EINVAL;
@@ -1707,6 +1740,7 @@ void *pt_take_picture(void * arg)
   int end_row, half_row;	/* Last and half-rows of image */
   int row_idx, col_idx;		/* Indices for copying from one buffer
 				   to imbuffer */
+  int read_mode;		       /* How to read out -- calculated once */
   const int READ_DOUBLE = 0;	/* Read up, then down */
   const int READ_INTERLEAVED = 1; /* Read interleaved */
   const int READ_SINGLE_DIRECTION = 2; /* Read only up */
@@ -1729,9 +1763,21 @@ void *pt_take_picture(void * arg)
 
   set_shutter(SHUTTER_CLOSE); /* Close shutter, modified automaticall by mode */
 
+  
+  /* Set read mode according to chosen menu setting and fast mode setting*/
+  read_mode = READ_DOUBLE;	/* Arbitrarily chosen */
+  if (b_video_mode)		/* Video mode */
+    {
+      read_mode = READ_INTERLEAVED;
+    }
+  else				/* Normal mode */
+    {
+      read_mode = b_read_fast;	/* Choose the selected scheme */
+    }
+
 
   /* Branch depending on Read Mode */
-  if (b_read_fast == READ_DOUBLE)
+  if (read_mode == READ_DOUBLE)
     {
       for (updown_idx=0; updown_idx<2; updown_idx++) /* 0 Read up, 1 read down */
 	{
@@ -1784,7 +1830,7 @@ void *pt_take_picture(void * arg)
 	  //printf("&&&&&&&&&&&&&&&&&&&&&&Performing iteration %i of updown.\n",updown_idx);
 	}
     }
-  else if (b_read_fast == READ_INTERLEAVED) /* Interleaved read */
+  else if (read_mode == READ_INTERLEAVED) /* Interleaved read */
     {
       if (exp_args->ccd_clear)
 	{
@@ -1886,7 +1932,7 @@ void *pt_take_picture(void * arg)
   
 
   /* Now branch based on read mode  */
-  if (b_read_fast == READ_DOUBLE)
+  if (read_mode == READ_DOUBLE)
     {
       /* Assemble the image from the bottom half of the down buffer */
       for (row_idx = half_row; row_idx < end_row; row_idx++)
@@ -1901,7 +1947,7 @@ void *pt_take_picture(void * arg)
 	  //printf("@@@@@@@@@@@@@@@@@@@@\nCopying row from lower half.\n@@@@@@@@@@@@@@@@@@@@@@@@\n");
 	}
     }
-  else if (b_read_fast == READ_INTERLEAVED) /* Interleaved read */
+  else if (read_mode == READ_INTERLEAVED) /* Interleaved read */
     {
       /* Copy bottom half of image from bottom half of up buffer, since data
 	 were all read into up_buffer */
@@ -2137,4 +2183,27 @@ void set_shutter(int new_state)
       return;
     }
   
+}
+
+
+void populate_slow_mode(cds_t *curr_cds, delays_t *curr_delays)
+{
+  lbnl_controller_get_cds(dfd, curr_cds);
+  lbnl_controller_get_delays(dfd, curr_delays);
+  return;
+}
+
+void populate_fast_mode(const cds_t *cds_normal, const delays_t *ccd_delay_normal, cds_t *cds_fast, delays_t *ccd_delay_fast)
+{
+  *cds_fast = *cds_normal;
+  *ccd_delay_fast = *ccd_delay_normal; /* Copy over existing values */
+
+  ccd_delay_fast->clock_parallel = 14400; /* Set delay parameter to new value */
+  
+  cds_fast->averaging = 5;
+  cds_fast->digioff = 2000;
+  cds_fast->nsamp_reset = 32;
+  cds_fast->nsamp_signal = 32;
+
+  return;
 }
