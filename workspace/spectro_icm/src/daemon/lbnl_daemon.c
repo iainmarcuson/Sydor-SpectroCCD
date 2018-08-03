@@ -1622,6 +1622,7 @@ void *thread_main(void *arg)
 	    sprintf (response.strmsg, "Invalid shutter mode %i.\n", message.data[0]);
 	  }
 	send (fdin, (void *)&response, sizeof(response), 0);
+	break;
       case LBNL_SET_FAST_MODE:
 	printf("LBNL_FAST_MODE: %i.\n", message.data[0]);
 	if (message.data[0] == 0) /* Normal mode */
