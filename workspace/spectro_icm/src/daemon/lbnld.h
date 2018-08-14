@@ -112,6 +112,8 @@
 #define LBNL_SET_SHUTTERMODE 210
 #define LBNL_SET_FAST_MODE 220
 #define LBNL_SET_BG 230
+#define LBNL_RST_TIMER 240
+#define LBNL_RD_TIMER 241
 
 //XXX FIXME TODO
 //Below are aggregated commands.  Make separate commands.

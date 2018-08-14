@@ -7,6 +7,7 @@
 #include <time.h>
 #include <string.h>
 #include <sys/time.h>
+#include <time.h>
 #include "../lbnl_typedefs.h"
 #include "../lbnl_params.h"
 
@@ -61,6 +62,10 @@ static u32 shutter_mode;	/* TODO Maybe add in shutter status var */
 /* See also "Take as BG" options */
 
 static u32 take_as_bg = 0;
+
+/* Timer variables */
+static struct timespec start_time, curr_time;
+static int elapsed_time;
 
 
 /* Globals for normal- and fast-mode config settings */
@@ -1654,6 +1659,18 @@ void *thread_main(void *arg)
 	sprintf(response.strmsg, "DONE");
 	send (fdin, (void *)&response, sizeof(response), 0);
 	break;
+      case LBNL_RST_TIMER:
+	clock_gettime(CLOCK_MONOTONIC, &start_time);
+	sprintf(response.strmsg, "DONE");
+	send (fdin, (void *)&response, sizeof(response), 0);
+	break;
+      case LBNL_RD_TIMER:
+	clock_gettime(CLOCK_MONOTONIC, &curr_time);
+	elapsed_time = curr_time.tv_sec - start_time.tv_sec;
+	response.data[0] = elapsed_time;
+	sprintf(response.strmsg, "DONE");
+	send (fdin, (void *)&response, sizeof(response), 0);
+	break;
       default:
 	sprintf (response.strmsg, "ERROR unknown cmd %d\n",message.cmd);
 	response.status = -EINVAL;
@@ -2188,8 +2205,13 @@ void set_shutter(int new_state)
   if (take_as_bg)		/* Taking background image */
     {
       /* Close the shutter */
-      lbnl_controller_set_shutter(dfd, 0);
+      lbnl_controller_set_shutter(dfd, SHUTTER_CLOSE);
       return;
+    }
+  else if (b_video_mode)
+    {
+      /* Open the shutter */
+      lbnl_controller_set_shutter(dfd, SHUTTER_OPEN);
     }
   else				/* Normal mode and not bg */
     {
