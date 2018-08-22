@@ -1738,7 +1738,7 @@ int lbnl_controller_get_autoshutter (dref fd, i8 *autoshutter)
 /**
  * opens or closes the shutter manually.
  * @param[in] fd is the driver reference
- * @param[in] shut is shutter_open (1) or shutter_close(0)
+ * @param[in] shut is shutter_open (0) or shutter_close(1)
  **/
 int lbnl_controller_set_shutter (dref fd, i8 shut)
 {
@@ -1763,7 +1763,7 @@ int lbnl_controller_set_shutter (dref fd, i8 shut)
  * get shutter status. This may go to the controller if implemented, otherwise
  * return the last global shutter state
  * @param[in] fd is the driver reference
- * @param[out] shut return if shutter_open (1) or shutter_close(0)
+ * @param[out] shut return if shutter_open (0) or shutter_close(1)
  **/
 int lbnl_controller_get_shutter (dref fd, i8 *shut)
 {
@@ -1776,7 +1776,7 @@ int lbnl_controller_get_shutter (dref fd, i8 *shut)
   error = ccd_mem_open(&gpio, address, size);
   regval = ccd_mem_read(&gpio,0);
   error += ccd_mem_close(&gpio);
-  shut = (regval >> 5)&0x3;
+  *shut = (regval >> 5)&0x3;
   return(error);
 
 }
