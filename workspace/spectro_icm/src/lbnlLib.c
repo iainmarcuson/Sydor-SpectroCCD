@@ -1748,7 +1748,7 @@ int lbnl_controller_set_shutter (dref fd, i8 shut)
   u32 regval;
   int error=0;
   
-  value = (value * shut)& 0x30; //allow aux shutter on gpio(6)
+  value = (value * shut)& 0x60; //allow aux shutter on gpio(6)
   memory gpio;
   error = ccd_mem_open(&gpio, address, size);
   regval = ccd_mem_read(&gpio,0);
