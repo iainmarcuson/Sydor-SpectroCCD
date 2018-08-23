@@ -1896,6 +1896,7 @@ void *pt_take_picture(void * arg)
       set_shutter(SHUTTER_OPEN);
       wait_status = wait_exposure_time();
 
+
       if (wait_status)
 	{
 	  exp_abort = 0;	/* Clear abort flag so we do not trigger on 
@@ -2184,6 +2185,22 @@ int checkerboard()
 int wait_exposure_time()
 {
   struct timeval start_time, curr_time, diff_time;
+
+  /* If in video mode, we want to return early */
+  if (b_video_mode)
+    {
+      if (exp_abort)
+	{
+	  pthread_mutex_lock(&acq_state_mutex);
+	  img_acq_state = Aborted;
+	  pthread_mutex_unlock(&acq_state_mutex);
+	  return 1;		/* Return img_acq aborted */
+	}
+      else
+	{
+	  return 0;
+	}
+    }
 
   gettimeofday(&start_time, NULL);
 
