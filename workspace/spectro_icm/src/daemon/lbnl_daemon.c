@@ -1594,9 +1594,13 @@ void *thread_main(void *arg)
 	  {
 	    shutter_mode = SHUTTER_MODE_NORMAL;
 	    /* TODO Set according to exposure state */
-	    if (take_as_bg == 0) /* Background, so leave shutter closed */
+	    if (take_as_bg != 0) /* Background, so leave shutter closed */
 	      {
 		lbnl_controller_set_shutter(dfd, SHUTTER_CLOSE);
+	      }
+	    else if (b_video_mode) /* Videomode, so open shutter */
+	      {
+		lbnl_controller_set_shutter(dfd, SHUTTER_OPEN);
 	      }
 	    else		/* Not taking as background, so set according to state */
 	      {
@@ -1816,7 +1820,7 @@ void *pt_take_picture(void * arg)
   read_mode = READ_DOUBLE;	/* Arbitrarily chosen */
   if (b_video_mode)		/* Video mode */
     {
-      read_mode = READ_INTERLEAVED;
+      read_mode = READ_SINGLE_DIRECTION;
     }
   else				/* Normal mode */
     {
