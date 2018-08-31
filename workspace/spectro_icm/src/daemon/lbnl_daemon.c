@@ -22,6 +22,7 @@ static u32 cfg_gain;
 //Image size
 static u32 img_size_x, img_size_y;
 static u32 ccd_size_x, ccd_size_y;  //Size of the active area, before overscan
+static float pix_width, pix_height; /* Size of a pixel in microns */
 
 //Image acquisition and readout thread variables
 static sem_t acq_state;
@@ -61,7 +62,9 @@ static u32 b_read_fast; // High to read fast
 static u32 shutter_mode;	/* TODO Maybe add in shutter status var */
 /* See also "Take as BG" options */
 
-static u32 take_as_bg = 0;
+static volatile u32 take_as_bg = 0;
+static pthread_mutex_t bg_state_mutex;
+
 
 /* Timer variables */
 static struct timespec start_time, curr_time;
@@ -124,6 +127,11 @@ int main(int argc, char **argv)
   img_acq_state = Not_Started;
   pthread_mutex_unlock(&acq_state_mutex);
   
+  pthread_mutex_init(&bg_state_mutex, NULL);
+  pthread_mutex_lock(&bg_state_mutex);
+  take_as_bg = 0;
+  pthread_mutex_unlock(&bg_state_mutex);
+
   /* Test mode */
   if ((argc>=2) && (strcmp(argv[1], "--test") == 0))
     {
@@ -219,7 +227,7 @@ void *thread_main(void *arg)
       close (fdin);
       cin = 0;
     } else {
-      printf ("cmd %d\n", message.cmd);
+      //printf ("cmd %d\n", message.cmd);
       switch (message.cmd) {
       case LBNL_OPEN:
 	ret = 0;
@@ -398,7 +406,7 @@ void *thread_main(void *arg)
 	  }
 	break;
       case LBNL_GET_PROG:
-	printf ("cmd: GET_PROG\n");
+	//printf ("cmd: GET_PROG\n");
 	if ((ret=lbnl_readout_get_status (dfd, &readstat))!=0){
 	  printf ("ERROR %d\n",ret);
 	  sprintf (response.strmsg, "ERROR %d\n",ret);
@@ -633,6 +641,14 @@ void *thread_main(void *arg)
 		    cfg_line_valid=1;
 		  }
 
+		count_cfg_args = sscanf(config_line, "PixSize: %f %f ",
+					&pix_width, &pix_height);
+
+		if (count_cfg_args == 2)
+		  {
+		    cfg_line_valid=1;
+		  }
+		
 		if (!cfg_line_valid)
 		  {
 		    /* TODO add error handling */
@@ -665,13 +681,13 @@ void *thread_main(void *arg)
 	send (fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
       case LBNL_GET_ELAPSED_TIME:
-	printf ("cmd: GET_ELAPSED_TIME\n");
+	//printf ("cmd: GET_ELAPSED_TIME\n");
 	response.data[0] = exp_time_elapsed;
 	sprintf(response.strmsg, "DONE");
 	send (fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
       case LBNL_GET_EXPTIME_PROG:
-	printf ("cmd: GET_EXPTIME_PROG\n");
+	//printf ("cmd: GET_EXPTIME_PROG\n");
 	if (exp_time == 0)
 	  {
 	    response.data[0] = 100;	/* If no exposure time, say it is 
@@ -1558,7 +1574,7 @@ void *thread_main(void *arg)
 	pthread_mutex_lock(&acq_state_mutex);
 	response.data[0] = img_acq_state;
 	pthread_mutex_unlock(&acq_state_mutex);
-	printf("img_acq_state is %i.\n", response.data[0]);
+	//printf("img_acq_state is %i.\n", response.data[0]);
 	send(fdin, (void *)&response, sizeof(respstruct_t),0);
 	break;
 
@@ -1594,16 +1610,20 @@ void *thread_main(void *arg)
 	  {
 	    shutter_mode = SHUTTER_MODE_NORMAL;
 	    /* TODO Set according to exposure state */
+	    pthread_mutex_lock(&bg_state_mutex);
 	    if (take_as_bg != 0) /* Background, so leave shutter closed */
 	      {
+		pthread_mutex_unlock(&bg_state_mutex);
 		lbnl_controller_set_shutter(dfd, SHUTTER_CLOSE);
 	      }
 	    else if (b_video_mode) /* Videomode, so open shutter */
 	      {
+		pthread_mutex_unlock(&bg_state_mutex);
 		lbnl_controller_set_shutter(dfd, SHUTTER_OPEN);
 	      }
 	    else		/* Not taking as background, so set according to state */
 	      {
+		pthread_mutex_unlock(&bg_state_mutex);
 		pthread_mutex_lock(&acq_state_mutex); /* Check state and lock */
 		if (img_acq_state == Exposing)	      /* Exposing, so open shutter */
 		  {
@@ -1637,7 +1657,7 @@ void *thread_main(void *arg)
 	send (fdin, (void *)&response, sizeof(response), 0);
 	break;
       case LBNL_GET_SHUTTERMODE:
-	printf("cmd: LBNL_GET_SHUTTERMODE\n");
+	//printf("cmd: LBNL_GET_SHUTTERMODE\n");
 	sprintf(response.strmsg, "DONE");
 	response.data[0] = 0;	/* Clear since get shutter is i8* */
 	/* XXX FIXME 2-bit value in code, but lbnl_controller_get_shutter says 0 or 1  */
@@ -1647,6 +1667,7 @@ void *thread_main(void *arg)
 	  {
 	    printf("**************************\nError on Get Shutter Mode\n******************\n");
 	  }
+	//printf("**********************\nShutter Value: 0x%X\nTake as BG: %i\n********************\n", response.data[0], take_as_bg);
 	send(fdin, (void *)&response, sizeof(respstruct_t), 0);
 	break;
       case LBNL_SET_FAST_MODE:
@@ -1669,6 +1690,7 @@ void *thread_main(void *arg)
 	break;
       case LBNL_SET_BG:
 	printf("LBNL_SET_BG: %i\n", message.data[0]);
+	pthread_mutex_lock(&bg_state_mutex);
 	if (message.data[0])
 	  {
 	    take_as_bg = 1;
@@ -1677,6 +1699,7 @@ void *thread_main(void *arg)
 	  {
 	    take_as_bg = 0;
 	  }
+	pthread_mutex_unlock(&bg_state_mutex);
 	sprintf(response.strmsg, "DONE");
 	send (fdin, (void *)&response, sizeof(response), 0);
 	break;
@@ -1691,6 +1714,20 @@ void *thread_main(void *arg)
 	response.data[0] = elapsed_time;
 	sprintf(response.strmsg, "DONE");
 	send (fdin, (void *)&response, sizeof(response), 0);
+	break;
+      case LBNL_GET_BG:
+	pthread_mutex_lock(&bg_state_mutex);
+	response.data[0] = take_as_bg;
+	pthread_mutex_unlock(&bg_state_mutex);
+	printf("LBNL_GET_BG: BG value is %i.\n",take_as_bg);
+	sprintf(response.strmsg, "DONE");
+	send(fdin, (void *)&response, sizeof(response), 0);
+	break;
+      case LBNL_GET_PIX_SIZE:
+	*((float *) &response.data[0]) = pix_width;
+	*((float *) &response.data[1]) = pix_height;
+	sprintf(response.strmsg, "DONE");
+	send(fdin, (void *)&response, sizeof(response),0);
 	break;
       default:
 	sprintf (response.strmsg, "ERROR unknown cmd %d\n",message.cmd);
@@ -2234,28 +2271,37 @@ int wait_exposure_time()
 /* Set shutter, taking into account shutter mode and "Take as BG" mode */
 void set_shutter(int new_state)
 {
+  pthread_mutex_lock(&bg_state_mutex);
+  printf("###########################\nSHUTTERMODE: %i\n:TakeAsBG: %i\nAcqState: %i\n###################\n",shutter_mode, take_as_bg, img_acq_state);
+  pthread_mutex_unlock(&bg_state_mutex);
+
   if (shutter_mode == SHUTTER_MODE_OPEN || shutter_mode == SHUTTER_MODE_CLOSED) /* Forcing mode */
     {
       /* Do nothing */
       return;
     }
 
+  pthread_mutex_lock(&bg_state_mutex);
   if (take_as_bg)		/* Taking background image */
     {
+      pthread_mutex_unlock(&bg_state_mutex);
       /* Close the shutter */
       lbnl_controller_set_shutter(dfd, SHUTTER_CLOSE);
       return;
     }
   else if (b_video_mode)
     {
+      pthread_mutex_unlock(&bg_state_mutex);
       /* Open the shutter */
       lbnl_controller_set_shutter(dfd, SHUTTER_OPEN);
     }
   else				/* Normal mode and not bg */
     {
+      pthread_mutex_unlock(&bg_state_mutex);
       lbnl_controller_set_shutter(dfd, new_state);
       return;
     }
+
   
 }
 
