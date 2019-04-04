@@ -117,6 +117,7 @@
 #define LBNL_RST_TIMER 240
 #define LBNL_RD_TIMER 241
 #define LBNL_GET_PIX_SIZE 250
+#define LBNL_READ_AUX_PORT 260
 
 //XXX FIXME TODO
 //Below are aggregated commands.  Make separate commands.

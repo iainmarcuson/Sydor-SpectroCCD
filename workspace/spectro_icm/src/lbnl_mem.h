@@ -44,7 +44,7 @@
 
 typedef struct {
    int fd;
-   void * ptr;
+   volatile void * ptr;
    unsigned int size;
    unsigned int page_offset;	// ptr is aligned to the page size, always use the offset to manipulate
    /* declare as many members as desired, but the entire structure size
@@ -57,10 +57,11 @@ int lvds_master();
 int lvds_slave();
 int check_power();
 
-int ccd_mem_open(memory * newmemory, unsigned int address, unsigned int size);
-int ccd_mem_close(memory * yourmemory);
-int ccd_mem_read(memory * mem, unsigned int offset);
-void ccd_mem_write(memory * mem, unsigned int offset, int value);
+//XXX FIXME Remove volatile from memory below
+int ccd_mem_open(volatile memory * newmemory, unsigned int address, unsigned int size);
+int ccd_mem_close(volatile memory * yourmemory);
+int ccd_mem_read(volatile memory * mem, unsigned int offset);
+void ccd_mem_write(volatile memory * mem, unsigned int offset, int value);
 
 void resetCCDstate();
 

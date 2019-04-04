@@ -18,6 +18,7 @@
 #include "fitsio.h"
 #include "lbnl_parser.h"
 #include "lbnl_params.h"
+#include "lbnl_aux.h"
 
 static u32 exposure_time = 0;
 
@@ -1781,6 +1782,20 @@ int lbnl_controller_get_shutter (dref fd, i8 *shut)
 
 }
 
+int lbnl_controller_read_aux(dref fd, u32 *regval)
+{
+  unsigned int port_addr = GPIO_ADDR;
+  unsigned int size = 1024;
+  int error = 0;
+  volatile memory gpio;
+
+  error = ccd_mem_open(&gpio, port_addr, size);
+  *regval = ccd_mem_read(&gpio,0);
+  error += ccd_mem_close(&gpio);
+  return error;
+}
+  
+  
 /*IMPORTANT: the next ones are low level, engineering ones, and they may not be 
  * implemented by all callers -this is, only the engineering-oriented interfaces
  * but not necessarily the run-only clients. Some may require knowledge and safety

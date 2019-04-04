@@ -30,6 +30,10 @@ static pthread_t acq_thread, read_thread, fits_thread;
 static enum ImgAcqStatus img_acq_state;
 static pthread_mutex_t acq_state_mutex;
 
+/* Auxillary port value */
+static volatile u32 aux_port_val;
+static volatile u32 aux_port_cnt;
+
 //Image variables
 static int img_count_reset;	/* Count of images since last reset */
 
@@ -95,6 +99,8 @@ int main(int argc, char **argv)
   struct sockaddr_in address,remote;
   pthread_t        tid;
 
+  // Clear count of aux port reads
+  aux_port_cnt = 0;
 
   /* Clear image counter variable at startup */
   img_count_reset = 0; 
@@ -1729,6 +1735,14 @@ void *thread_main(void *arg)
 	sprintf(response.strmsg, "DONE");
 	send(fdin, (void *)&response, sizeof(response),0);
 	break;
+      case LBNL_READ_AUX_PORT:
+    	  aux_port_cnt++;
+	lbnl_controller_read_aux(dfd, &aux_port_val);
+	sprintf(response.strmsg, "DONE");
+	response.data[0] = aux_port_val;
+	response.data[1] = aux_port_cnt;
+	send(fdin, (void *)&response, sizeof(response),0);
+	break;
       default:
 	sprintf (response.strmsg, "ERROR unknown cmd %d\n",message.cmd);
 	response.status = -EINVAL;
@@ -1890,8 +1904,9 @@ void *pt_take_picture(void * arg)
 	  pthread_mutex_lock(&acq_state_mutex);
 	  img_acq_state = Exposing;
 	  pthread_mutex_unlock(&acq_state_mutex);
-	  wait_status = wait_exposure_time();
 	  set_shutter(SHUTTER_OPEN);
+	  wait_status = wait_exposure_time();
+	  
 	  if (wait_status)
 	    {
 	      exp_abort = 0;		/* Clear abort flag so we do not trigger
@@ -2136,6 +2151,7 @@ void *pt_take_picture(void * arg)
   pthread_mutex_unlock(&acq_state_mutex);
     
  end_exp:
+  set_shutter(SHUTTER_CLOSE);	/* Can jump here after exposure aborted, so need to close shutter */
   sem_post(&acq_state);
 
   free(arg);

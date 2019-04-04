@@ -100,19 +100,20 @@ int check_power()
 //	memWrite(address, value);
 //}
 
-int ccd_mem_read(memory * mem, unsigned int offset)
+int ccd_mem_read(volatile memory * mem, unsigned int offset)
 {
-	int value = 0;
+	volatile int value = 0;
 	value = *((unsigned *)(mem->ptr + mem->page_offset + offset));
 	return value;
 }
 
-void ccd_mem_write(memory * mem, unsigned int offset, int value)
+void ccd_mem_write(volatile memory * mem, unsigned int offset, int value)
 {
 	*((unsigned *)(mem->ptr + mem->page_offset + offset)) = value;
 }
 
-int ccd_mem_open(memory * mem, unsigned int address, unsigned int size)
+//XXX FIXME DEBUGGING Remove volatile from mem
+int ccd_mem_open(volatile memory * mem, unsigned int address, unsigned int size)
 {
 //	int fd;
 //	int mem_size = 16*1024/4; //size of ??
@@ -136,7 +137,7 @@ int ccd_mem_open(memory * mem, unsigned int address, unsigned int size)
 
 }
 
-int ccd_mem_close(memory * mem)
+int ccd_mem_close(volatile memory * mem)
 {
 	int error;
 	error = munmap(mem->ptr, mem->size);
