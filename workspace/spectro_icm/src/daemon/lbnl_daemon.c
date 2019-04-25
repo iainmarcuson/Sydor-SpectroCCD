@@ -30,6 +30,15 @@ static pthread_t acq_thread, read_thread, fits_thread;
 static enum ImgAcqStatus img_acq_state;
 static pthread_mutex_t acq_state_mutex;
 
+/* Trigger mode variables */
+typedef enum 
+  {
+   TRIGGER_INTERNAL = 0,
+   TRIGGER_EXTERNAL
+  } en_Trig_Mode;
+en_Trig_Mode trig_mode;
+static pthread_mutex_t trig_mode_mutex;
+
 /* Auxillary port value */
 static volatile u32 aux_port_val;
 static volatile u32 aux_port_cnt;
@@ -128,9 +137,11 @@ int main(int argc, char **argv)
   //XXX FIXME uncomment this signal(SIGTERM,signal_handler); /* catch kill signal */
   addrlen = sizeof(struct sockaddr_in);
 
+  pthread_mutex_init(&trig_mode_mutex, NULL);
+
   pthread_mutex_init(&acq_state_mutex, NULL);
   pthread_mutex_lock(&acq_state_mutex);
-  img_acq_state = Not_Started;
+  img_acq_state = No_Exposure;
   pthread_mutex_unlock(&acq_state_mutex);
   
   pthread_mutex_init(&bg_state_mutex, NULL);
@@ -1742,6 +1753,40 @@ void *thread_main(void *arg)
 	response.data[0] = aux_port_val;
 	response.data[1] = aux_port_cnt;
 	send(fdin, (void *)&response, sizeof(response),0);
+	break;
+      case LBNL_SET_TRIG_MODE:
+	printf("Set trigger mode to %i.\n", (int) message.data[0]);
+	sem_status = sem_trywait(&acq_state);
+	if (sem_status) 	/* Currently exposing or reading out, so don't change */
+	  {
+	    printf("Couldn't set trigger mode.\n");
+	    sprintf( response.strmsg, "ACQBUSY");
+	    response.data[0] = -1; /* Report error on response */
+	  }
+	else			/* Can change trigger mode */
+	  {
+	    pthread_mutex_lock(&trig_mode_mutex);
+	    trig_mode = message.data[0]; /* Set trigger mode */
+	    response.data[1] = trig_mode; /* Report trigger mode back */
+	    response.data[0] = 0; /* Signal success of changing trig mode */
+	    pthread_mutex_unlock(&trig_mode_mutex);
+	    sem_post(&acq_state); /* Release acq state semaphore */
+	    printf("Set trigger mode.\n");
+	  }
+	send(fdin, (void *)&response, sizeof(response), 0);
+	break;
+      case LBNL_GET_TRIG_MODE:
+	pthread_mutex_lock(&trig_mode_mutex);
+	response.data[0] = trig_mode;
+	pthread_mutex_unlock(&trig_mode_mutex);
+	sprintf(response.strmsg, "DONE");
+	send(fdin, (void *)&response, sizeof(response), 0);
+	break;
+      case LBNL_READ_GPIO:
+	iaux1 = message.data[0]; /* Get port number */
+	response.data[0] = lbnl_controller_read_gpio(dfd, message.data[0], &response.data[1]);
+	sprintf(response.strmsg, "DONE");
+	send(fdin, (void *)&response, sizeof(response), 0);
 	break;
       default:
 	sprintf (response.strmsg, "ERROR unknown cmd %d\n",message.cmd);

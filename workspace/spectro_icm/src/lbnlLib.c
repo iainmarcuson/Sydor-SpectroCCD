@@ -1795,7 +1795,19 @@ int lbnl_controller_read_aux(dref fd, u32 *regval)
   return error;
 }
   
+int lbnl_controller_read_gpio(dref fd, u32 reg, u32 *ret_val)
+{
+  unsigned int port_addr = GPIO_ADDR;
+  unsigned int size = 1024;
+  memory gpio;
+  int error = 0;
   
+  error = ccd_mem_open(&gpio, port_addr, size);
+  *ret_val = ccd_mem_read(&gpio, reg);
+  error += ccd_mem_close(&gpio);
+  return error;
+
+}
 /*IMPORTANT: the next ones are low level, engineering ones, and they may not be 
  * implemented by all callers -this is, only the engineering-oriented interfaces
  * but not necessarily the run-only clients. Some may require knowledge and safety

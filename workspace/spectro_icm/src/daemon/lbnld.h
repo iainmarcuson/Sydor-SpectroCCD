@@ -118,6 +118,10 @@
 #define LBNL_RD_TIMER 241
 #define LBNL_GET_PIX_SIZE 250
 #define LBNL_READ_AUX_PORT 260
+#define LBNL_SET_TRIG_MODE 270
+#define LBNL_GET_TRIG_MODE 271
+#define LBNL_READ_GPIO 280
+
 
 //XXX FIXME TODO
 //Below are aggregated commands.  Make separate commands.
@@ -156,6 +160,7 @@ enum ImgAcqStatus {
 	Not_Started = 128,
 	Done = 129,
 	Aborted = 130,
+	No_Exposure = 131, //Used at start of system to indicate no exposure has taken place; Not_Started is part of the acq sequence.
 	Clearing = 1,
 	Exposing = 2,
 	Readout = 3,
