@@ -10,13 +10,14 @@
 #include <time.h>
 #include "../lbnl_typedefs.h"
 #include "../lbnl_params.h"
+#include "../lbnl_aux.h"
 
 int got_sigterm=0;
 int listenfd;
 dref dfd;
 unsigned int bsize;
 u16 *imbuffer, *up_buffer, *down_buffer;
-static image_num=0;
+static int image_num=0;
 static u32 cfg_gain;
 
 //Image size
@@ -39,6 +40,10 @@ typedef enum
 en_Trig_Mode trig_mode;
 static pthread_mutex_t trig_mode_mutex;
 
+/* HW Trigger Monitor variables */
+static pthread_mutex_t trig_mon_mutex; /* Mutex for trigger status */
+static unsigned int hw_trig_detected;  /* Variable holding trigger status */
+
 /* Auxillary port value */
 static volatile u32 aux_port_val;
 static volatile u32 aux_port_cnt;
@@ -49,7 +54,9 @@ static int img_count_reset;	/* Count of images since last reset */
 void *pt_take_picture(void *arg);
 void *pt_read_picture(void *arg);
 void *pt_take_fits(void *arg);
+void *thread_hw_trig_mon(void *arg);
 void set_shutter(int new_state);
+void lbnl_register_params(void);
 
 //TODO ultimately can be aborted
 int wait_exposure_time();	/* Waits for a exposure time */
@@ -149,6 +156,14 @@ int main(int argc, char **argv)
   take_as_bg = 0;
   pthread_mutex_unlock(&bg_state_mutex);
 
+  pthread_mutex_init(&trig_mon_mutex, NULL);
+  pthread_mutex_lock(&trig_mon_mutex);
+  hw_trig_detected = 0; 	/* No trigger at start */
+  pthread_mutex_unlock(&trig_mon_mutex);
+
+  /* Spawn trigger monitor */
+  pthread_create(&tid, NULL, &thread_hw_trig_mon, NULL);
+  
   /* Test mode */
   if ((argc>=2) && (strcmp(argv[1], "--test") == 0))
     {
@@ -189,6 +204,37 @@ int allocate_buffer (int nbytes)
     return (-ENOMEM);
   bsize = nbytes;
   return (0);
+}
+
+/* Hardware trigger monitor */
+void *thread_hw_trig_mon(void *hw_trig_data)
+{
+  unsigned int curr_port;
+  unsigned int prev_port;	/* Current and previous port values */
+  const unsigned int TRIG_REG = 8; /* Read in at reg 8 */
+  const unsigned int TRIG_MASK = 0x01; /* Bit zero */
+  const unsigned int SLEEP_TIME = 50000; /* Sample at ~20Hz */
+  curr_port = 0 & TRIG_MASK;
+  prev_port = 0 & TRIG_MASK;		/* Start with trigger "detected" to force full cycle */
+
+  while(1)			/* Loop forever */
+    {
+      /* XXX TODO See if can pass dfd as zero for no impact, since it does not appear to be used in function */
+      prev_port = curr_port;
+      /* TODO Add in error checking and persistent memory pointer */
+      lbnl_controller_read_gpio(0, TRIG_REG, &curr_port);
+      curr_port = curr_port & TRIG_MASK; /* Only look at trigger bit */
+      if ((curr_port == 0) && (prev_port)) /* XXX Trigger on negative edge */
+	{
+	  pthread_mutex_lock(&trig_mon_mutex);
+	  hw_trig_detected = 1;
+	  pthread_mutex_unlock(&trig_mon_mutex);
+	} /* XXX No else; trigger is sticky and reset on read */
+
+      usleep(SLEEP_TIME);		/* Sample again after a sleep */
+    }
+  
+  return NULL;			/* XXX Should never get here. */
 }
 
 /*-----------------------------------------------------------------------------
@@ -1180,7 +1226,6 @@ void *thread_main(void *arg)
 	if ((ret=lbnl_controller_get_nclocks (dfd, &ndacs))<0)
 	  {
 	    printf ("ERROR %d\n",ret);
-	    return ret;
 	  }
 
 	clocks = (lbnl_clock_t *) malloc (ndacs *sizeof (lbnl_clock_t));
@@ -1189,7 +1234,6 @@ void *thread_main(void *arg)
 	if ((ret=lbnl_controller_get_all_clocks (dfd, clocks, &ndacs))!=0)
 	  {
 	    printf ("ERROR %d\n",ret);
-	    return ret;
 	  }
 	for (clk_idx = 0; clk_idx<ndacs; clk_idx++)
 	  {
@@ -1785,6 +1829,15 @@ void *thread_main(void *arg)
       case LBNL_READ_GPIO:
 	iaux1 = message.data[0]; /* Get port number */
 	response.data[0] = lbnl_controller_read_gpio(dfd, message.data[0], &response.data[1]);
+	sprintf(response.strmsg, "DONE");
+	send(fdin, (void *)&response, sizeof(response), 0);
+	break;
+      case LBNL_READ_HW_TRIG:
+	/* Get current value of hardware trigger, then clear it */
+	pthread_mutex_lock(&trig_mon_mutex);
+	response.data[0] = hw_trig_detected;
+	hw_trig_detected = 0;	/* Clear after read */
+	pthread_mutex_unlock(&trig_mon_mutex);
 	sprintf(response.strmsg, "DONE");
 	send(fdin, (void *)&response, sizeof(response), 0);
 	break;
