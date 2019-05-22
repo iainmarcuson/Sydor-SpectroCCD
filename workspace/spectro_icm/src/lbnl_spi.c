@@ -348,7 +348,7 @@ int spi_get_temperature(float * temp)
 	rrtd=(adc_value*rref)/steps;		// calculate resistance of the RTD
 	*temp = T_rtd(rrtd);			// calculate the temperature
 	printf("Temperature raw: %x  resistance %f temperature %f\n", adc_value,rrtd,temp);
-
+	close(temp_spi);
 	return(0);
 }
 
