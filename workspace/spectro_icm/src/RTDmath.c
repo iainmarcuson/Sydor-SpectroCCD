@@ -11,6 +11,8 @@
 
 // include files....
 #include "RTDmath.h"
+#include <stdio.h>
+#include <stdlib.h>
 
 // definitions....
 #define AA (3.9083E-3)      // A term of forward transfer functions
@@ -34,8 +36,34 @@
 // a direct mathematical method.
 
 float T_rtd (float r) {
-	r=r/10;
+  //printf("%s: r starts as %f\n", __FUNCTION__, (double) r);
+
   float t;
+  //volatile double final_r, final_t;
+  //volatile double *final_destination;
+
+  //final_destination = malloc(sizeof(double) * 2);
+
+  /*
+  final_r = (double) r;
+  if (1)
+  {
+	  final_r = (double) r;
+	  final_destination[0] = (double) r;
+	  asm("");
+  }
+*/
+
+  r=r/10;
+
+  /*
+  if (1)
+  {
+	  final_r = (double) r;
+	  final_destination[0] = (double) r;
+	  asm("");
+  }
+*/
 
   // first determine if input resistance is within spec'd range
   if (r<RMIN)           // if input is under-range..
@@ -49,15 +77,26 @@ float T_rtd (float r) {
     // if r < threshold, use negative transfer function
 //    if (r<100)  t=-242.0199+2.222812*r+2.585885E-3*pow(r,2)-4.826040E-6*pow(r,3)-2.818340E-8*pow(r,4)+1.524259E-10*pow(r,5);
 //    if (r<96.6)  t=-241.9610+2.216253*r+2.854064E-3*pow(r,2)-9.912120E-6*pow(r,3)+1.705183E-8*pow(r,4);
-    if (r<95.1)  t=-242.0906+2.227625*r+2.517790E-3*pow(r,2)-5.861951E-6*pow(r,3);
+    if (r<95.1)  t=-242.0906+2.227625*r+2.517790E-3*powf(r,2)-5.861951E-6*powf(r,3);
 //    if (r<72.1)  t=-242.9703+2.283841*r+1.472734E-3*pow(r,2);
     // NOTE: un-comment only one of the above four lines...
     // (5th-order, 4th-order, 3rd-order, 2nd-order respectively)
 
     // if r >= threshold, use positive transfer function
-    else t=(Z1+sqrt(Z2+Z3*r))/Z4;
+    else t=(Z1+sqrtf(Z2+Z3*r))/Z4;
 
   }
+  //printf("%s: r is %f\tt is %f", __FUNCTION__, (double) r, (double) t);
+  /*
+  if (1)
+  {
+	  final_t = (double) t;
+	  final_destination[1] = (double) t;
+	  asm("");
+  }
+
+  free(final_destination);
+  */
   return (t);
 }
 

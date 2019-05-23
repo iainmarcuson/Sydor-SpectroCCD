@@ -1087,6 +1087,7 @@ int lbnl_controller_set_gain (dref fd, u32 gain)
 int lbnl_controller_get_temps (dref fd, f32 *temp1, f32 *temp2)
 {
   int error;
+  float val_temp;
   error = lbnl_check_lock(fd);
   if (error != 0) {
     return error;
@@ -1119,8 +1120,11 @@ int lbnl_controller_get_temps (dref fd, f32 *temp1, f32 *temp2)
 
 
   rrtd = (adc_value * rref) / steps;		// calculate resistance of the RTD
-  *temp1 = T_rtd(rrtd);				// calculate the temperature
-  printf("Temperature raw: %x  resistance %f temperature %f\n", adc_value,rrtd,temp1);
+  val_temp = T_rtd(rrtd);
+  *temp1 = val_temp;				// calculate the temperature
+  //printf("Temperature raw: %x  resistance %f temperature %hf\n", adc_value,rrtd, *temp1);
+  //printf("Temperature raw: %x  resistance %f temperature %f\n", adc_value,rrtd,(double) *temp1);
+  printf("Temperature raw: %x  resistance %f temperature %f\n", adc_value,rrtd, temp1);
 
   spi_get_temperature(temp2);
   return (DONE);

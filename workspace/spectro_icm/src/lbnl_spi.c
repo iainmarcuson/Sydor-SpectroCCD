@@ -314,6 +314,7 @@ int spi_get_temperature(float * temp)
 	int temp_spi;
 	int ret=0, steps, adc_value;
 	float rrtd, rref;
+	float val_temp;
 
 	rref=1400;					// reference resistance
 	steps = pow(2,15)-1;		// adc steps
@@ -346,7 +347,10 @@ int spi_get_temperature(float * temp)
 	adc_value += (rx[1] << 8) & 0xff00;	//msb
 
 	rrtd=(adc_value*rref)/steps;		// calculate resistance of the RTD
-	*temp = T_rtd(rrtd);			// calculate the temperature
+	val_temp = T_rtd(rrtd);
+	*temp = val_temp;			// calculate the temperature
+	//printf("Temperature raw: %x  resistance %f temperature %hf\n", adc_value,rrtd, *temp);
+	//printf("Temperature raw: %x  resistance %f temperature %f\n", adc_value,rrtd,(double) *temp);
 	printf("Temperature raw: %x  resistance %f temperature %f\n", adc_value,rrtd,temp);
 	close(temp_spi);
 	return(0);
