@@ -90,6 +90,12 @@ static pthread_mutex_t bg_state_mutex;
 static struct timespec start_time, curr_time;
 static int elapsed_time;
 
+/* Filename variables */
+static const int MAX_FILENAME = 80; /* Longest filename */
+static const int MAX_FITSLEN = 68;  /* Longest FITS string length */
+static char cfg_filename[80]; /* Holds filename only */
+static char tim_filename[80]; /* Holds filename only */
+
 
 /* Globals for normal- and fast-mode config settings */
 /* May need to add mutex for coherency */
@@ -123,6 +129,10 @@ int main(int argc, char **argv)
 
   // Set to regular readout mode
   b_read_fast = 0;
+
+  /* Initialize filenames */
+  sprintf(cfg_filename, "Not_Set");
+  sprintf(tim_filename, "Not_Set");
 
   //Register the parameters into the config variable
   lbnl_register_params();
@@ -570,6 +580,29 @@ void *thread_main(void *arg)
 	//Close the file, since we are done with it
 	fclose(name_file);
 
+	/* Now extract the filename proper for reporting in metadata */
+	if (1)
+	  {
+	    char *last_pathsep = NULL;
+	    size_t filename_len = 0;
+	    last_pathsep = rindex(line, '/'); /* Get last path separator */
+	    if (last_pathsep == NULL)	      /* No path, use full name */
+	      {
+		last_pathsep = line; /* Use the full string */
+	      }
+	    else		/* There is a path */
+	      {
+		last_pathsep++;	/* Start after the path separator */
+	      }
+	    
+	    filename_len = strlen(last_pathsep); /* Get length */
+	    /* TODO May be useful to report overflow, but not now */
+
+	    bzero(tim_filename, sizeof(tim_filename)); /* Zero out if copy long */
+	    strncpy(tim_filename, last_pathsep, MAX_FITSLEN); /* Only copy what will fit */
+
+	  } /* if(1) */
+	    
 	//Now handle the filename as before
 	if (strlen(line) <= 0)
 	  sprintf (line, "%s", DEFTIMPATH);
@@ -615,6 +648,29 @@ void *thread_main(void *arg)
 	printf("Config file: %s\n", line);
 	//Close the file, since we are done with it
 	fclose(name_file);
+	
+	/* Now extract the filename proper for reporting in metadata */
+	if (1)
+	  {
+	    char *last_pathsep = NULL;
+	    size_t filename_len = 0;
+	    last_pathsep = rindex(line, '/'); /* Get last path separator */
+	    if (last_pathsep == NULL)	      /* No path, use full name */
+	      {
+		last_pathsep = line; /* Use the full string */
+	      }
+	    else		/* There is a path */
+	      {
+		last_pathsep++;	/* Start after the path separator */
+	      }
+	    
+	    filename_len = strlen(last_pathsep); /* Get length */
+	    /* TODO May be useful to report overflow, but not now */
+	    
+	    bzero(cfg_filename, sizeof(cfg_filename)); /* Zero out if copy long */
+	    strncpy(cfg_filename, last_pathsep, MAX_FITSLEN); /* Only copy what will fit */
+
+	  } /* if(1) */
 
 	//Now handle the filename as before
 	if (strlen(line) <= 0)
@@ -1839,6 +1895,16 @@ void *thread_main(void *arg)
 	hw_trig_detected = 0;	/* Clear after read */
 	pthread_mutex_unlock(&trig_mon_mutex);
 	sprintf(response.strmsg, "DONE");
+	send(fdin, (void *)&response, sizeof(response), 0);
+	break;
+      case LBNL_CFG_NAME:
+	bzero(response.strmsg, sizeof(response.strmsg)); /* Blank to zero */
+	strcpy(response.strmsg, cfg_filename);		 /* Copy in name */
+	send(fdin, (void *)&response, sizeof(response), 0);
+	break;
+      case LBNL_TIM_NAME:
+	bzero(response.strmsg, sizeof(response.strmsg)); /* Blank to zero */
+	strcpy(response.strmsg, tim_filename);		 /* Copy in name */
 	send(fdin, (void *)&response, sizeof(response), 0);
 	break;
       default:
