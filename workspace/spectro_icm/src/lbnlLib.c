@@ -1124,7 +1124,7 @@ int lbnl_controller_get_temps (dref fd, f32 *temp1, f32 *temp2)
   *temp1 = val_temp;				// calculate the temperature
   //printf("Temperature raw: %x  resistance %f temperature %hf\n", adc_value,rrtd, *temp1);
   //printf("Temperature raw: %x  resistance %f temperature %f\n", adc_value,rrtd,(double) *temp1);
-  printf("Temperature raw: %x  resistance %f temperature %f\n", adc_value,rrtd, temp1);
+  printf("Temperature raw: %x  resistance %f temperature %f\n", adc_value,rrtd, *temp1);
 
   spi_get_temperature(temp2);
   return (DONE);

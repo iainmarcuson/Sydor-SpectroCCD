@@ -351,7 +351,7 @@ int spi_get_temperature(float * temp)
 	*temp = val_temp;			// calculate the temperature
 	//printf("Temperature raw: %x  resistance %f temperature %hf\n", adc_value,rrtd, *temp);
 	//printf("Temperature raw: %x  resistance %f temperature %f\n", adc_value,rrtd,(double) *temp);
-	printf("Temperature raw: %x  resistance %f temperature %f\n", adc_value,rrtd,temp);
+	printf("Temperature raw: %x  resistance %f temperature %f\n", adc_value,rrtd,*temp);
 	close(temp_spi);
 	return(0);
 }
