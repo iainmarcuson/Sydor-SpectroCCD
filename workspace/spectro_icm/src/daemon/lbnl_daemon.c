@@ -44,6 +44,16 @@ static pthread_mutex_t trig_mode_mutex;
 static pthread_mutex_t trig_mon_mutex; /* Mutex for trigger status */
 static unsigned int hw_trig_detected;  /* Variable holding trigger status */
 
+/* Temperature Read Ability variables */
+static pthread_mutex_t temp_ability_mutex; /* Mutex for modifying variable declaring ability ot read temperature */
+static unsigned int temp_read_ability;	   /* Variable to hold status of reading temperature ability */
+static const unsigned int TEMP_READ_RESET = 0x01; /* Bit 0 */
+static const unsigned int TEMP_READ_TIM = 0x02;	  /* Bit 1 */
+static const unsigned int TEMP_READ_CFG = 0x04;	  /* Bit 2 */
+static const unsigned int TEMP_READ_ENABLE = 0x08; /* Bit 3 */
+static const unsigned int TEMP_READ_DONE = 0x0F;   /* OR of above */
+
+
 /* Auxillary port value */
 static volatile u32 aux_port_val;
 static volatile u32 aux_port_cnt;
@@ -170,6 +180,12 @@ int main(int argc, char **argv)
   pthread_mutex_lock(&trig_mon_mutex);
   hw_trig_detected = 0; 	/* No trigger at start */
   pthread_mutex_unlock(&trig_mon_mutex);
+
+  /* Initialize temperature read ability mutex and status variable */
+  pthread_mutex_init(&temp_ability_mutex, NULL);
+  pthread_mutex_lock(&temp_ability_mutex);
+  temp_read_ability = 0;	/* No steps taken at start */
+  pthread_mutex_unlock(&temp_ability_mutex);
 
   /* Spawn trigger monitor */
   pthread_create(&tid, NULL, &thread_hw_trig_mon, NULL);
@@ -616,6 +632,11 @@ void *thread_main(void *arg)
 	}
 	response.status = ret;
 	send (fdin, (void *)&response, sizeof (respstruct_t),0);
+	/* Set ability to read temperature flag; may want this as part of error checking */
+	pthread_mutex_lock(&temp_ability_mutex);
+	temp_read_ability = temp_read_ability | TEMP_READ_TIM; /* Set flag we just did */
+	pthread_mutex_unlock(&temp_ability_mutex);
+
 	break;
 
       case LBNL_FLOAD_CFG:
@@ -784,6 +805,11 @@ void *thread_main(void *arg)
 
 	response.status = ret;
 	send (fdin, (void *)&response, sizeof (respstruct_t),0);
+	/* Set ability to read temperature flag; may want this as part of error checking */
+	pthread_mutex_lock(&temp_ability_mutex);
+	temp_read_ability = temp_read_ability | TEMP_READ_CFG; /* Set flag we just did */
+	pthread_mutex_unlock(&temp_ability_mutex);
+
 	break;
 
       case LBNL_SET_EXPT:
@@ -824,17 +850,41 @@ void *thread_main(void *arg)
 	
       case LBNL_TEMPS:
 	printf ("cmd: TEMPS\n");
-	if ((ret=lbnl_controller_get_temps (dfd, &faux1, &faux2))!=0){
-	  printf ("ERROR %d\n",ret);
-	  sprintf (response.strmsg, "ERROR %d\n",ret);
-	} else {
-	  sprintf (response.strmsg, "DONE");
-	}
-	response.status = ret;
+	/* Check if we can perform a temperature read */
+	pthread_mutex_lock(&temp_ability_mutex);
+	if (temp_read_ability == TEMP_READ_DONE) /* All flags set, no extras */
+	  {
+	    iaux1 = 1;		/* Set we can read */
+	  }
+	else			/* All flags not set */
+	  {
+	    iaux1 = 0;		/* We cannot read */
+	  }
+	pthread_mutex_unlock(&temp_ability_mutex);
+	
+	/* Branch on iaux1  */
+	if (iaux1)		/* We can read */
+	  {
+	    if ((ret=lbnl_controller_get_temps (dfd, &faux1, &faux2))!=0){
+	      printf ("ERROR %d\n",ret);
+	      sprintf (response.strmsg, "ERROR %d\n",ret);
+	    } else {
+	      sprintf (response.strmsg, "DONE");
+	    }
+	    response.status = ret;
+	  }
+	else			/* We can't read */
+	  {
+	    response.status = 0; /* Set as no error */
+	    sprintf (response.strmsg, "DONE");
+	    faux1 = -1234.5;	/* Contrived, recognizable, impossible value */
+	    faux2 = -1234.5;	/* ibid */
+	  }
 	//			faux1 = 22.5;
 	//			faux2 = 23.5;
 	*((float *) &response.data[0]) =  faux1;
 	*((float *) &response.data[1]) =  faux2;
+		
 	printf ("temp1 %f, temp2 %f\n", faux1, faux2);
 	send (fdin, (void *)&response, sizeof (respstruct_t),0);
 	break;
@@ -1529,12 +1579,21 @@ void *thread_main(void *arg)
 	/* XXX Should probably have a semaphore on below line */
 	img_count_reset = 0;
 	send(fdin, (void *)&response, sizeof(respstruct_t),0);
+	/* Set ability to read temperature flag; may want this as part of error checking */
+	pthread_mutex_lock(&temp_ability_mutex);
+	temp_read_ability = temp_read_ability | TEMP_READ_RESET; /* Set flag we just did */
+	pthread_mutex_unlock(&temp_ability_mutex);
 	break;
       case LBNL_CMD_ENABLE:
 	//FIXME TODO Add error checking and user-determined masking
 	lbnl_controller_enable(dfd, DACMASK, CLKMASK);
 	response.status=0;
 	send(fdin, (void *)&response, sizeof(respstruct_t),0);
+	/* Set ability to read temperature flag; may want this as part of error checking */
+	pthread_mutex_lock(&temp_ability_mutex);
+	temp_read_ability = temp_read_ability | TEMP_READ_ENABLE; /* Set flag we just did */
+	pthread_mutex_unlock(&temp_ability_mutex);
+
 	break;
       case LBNL_CMD_CONFIG:
 	//FIXME TODO Add error checking and user-defined files
