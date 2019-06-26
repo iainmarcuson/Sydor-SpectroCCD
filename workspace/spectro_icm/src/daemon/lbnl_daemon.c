@@ -181,6 +181,9 @@ int main(int argc, char **argv)
   hw_trig_detected = 0; 	/* No trigger at start */
   pthread_mutex_unlock(&trig_mon_mutex);
 
+  /* Initialize exposure time -- do this before a mutex lock/unlock for hopeful memory barrier */
+  exp_time = 0;
+
   /* Initialize temperature read ability mutex and status variable */
   pthread_mutex_init(&temp_ability_mutex, NULL);
   pthread_mutex_lock(&temp_ability_mutex);
@@ -190,6 +193,8 @@ int main(int argc, char **argv)
   /* Spawn trigger monitor */
   pthread_create(&tid, NULL, &thread_hw_trig_mon, NULL);
   
+
+
   /* Test mode */
   if ((argc>=2) && (strcmp(argv[1], "--test") == 0))
     {
@@ -750,12 +755,13 @@ void *thread_main(void *arg)
 		    lbnl_controller_enable(dfd, enable_dacmask, enable_clkmask);
 		  }
 
-		count_cfg_args = sscanf(config_line, "ExpTime: %u ", &exp_time);
-		if (count_cfg_args == 1)
-		  {
-		    /* A correctly parsed Exposure Time line*/
-		    cfg_line_valid = 1;
-		  }
+		//Don't actually read exposure time
+		//count_cfg_args = sscanf(config_line, "ExpTime: %*u ", &exp_time);
+		//if (count_cfg_args == 1)
+		//  {
+		//    /* A correctly parsed Exposure Time line*/
+		//    cfg_line_valid = 1;
+		//  }
 
 		count_cfg_args = sscanf(config_line, "ImgSize: %u %u ", &temp_img_size_x, &temp_img_size_y);
 		if (count_cfg_args == 2)
