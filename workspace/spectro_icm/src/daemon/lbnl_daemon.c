@@ -47,12 +47,18 @@ static unsigned int hw_trig_detected;  /* Variable holding trigger status */
 /* Temperature Read Ability variables */
 static pthread_mutex_t temp_ability_mutex; /* Mutex for modifying variable declaring ability ot read temperature */
 static unsigned int temp_read_ability;	   /* Variable to hold status of reading temperature ability */
+static pthread_mutex_t temp_value_mutex;   /* Mutex for holding temperature */
 static const unsigned int TEMP_READ_RESET = 0x01; /* Bit 0 */
 static const unsigned int TEMP_READ_TIM = 0x02;	  /* Bit 1 */
 static const unsigned int TEMP_READ_CFG = 0x04;	  /* Bit 2 */
 static const unsigned int TEMP_READ_ENABLE = 0x08; /* Bit 3 */
-static const unsigned int TEMP_READ_DONE = 0x0F;   /* OR of above */
+static const unsigned int TEMP_READ_DONE = 0x07;   /* OR of above */
 
+/* Temperature Thread Variables */
+static float temperature_1;	/* First read temperature from sensor */
+static float temperature_2;	/* Second read temperature */
+static int temperature_error;	/* Error on last temperature read */
+static const float TEMP_INVALID = -1234.5; /* Easily-recognizable invalid temperature */
 
 /* Auxillary port value */
 static volatile u32 aux_port_val;
@@ -67,6 +73,7 @@ void *pt_take_fits(void *arg);
 void *thread_hw_trig_mon(void *arg);
 void set_shutter(int new_state);
 void lbnl_register_params(void);
+void *pt_read_temperature(void *arg);
 
 //TODO ultimately can be aborted
 int wait_exposure_time();	/* Waits for a exposure time */
@@ -130,6 +137,7 @@ int main(int argc, char **argv)
   socklen_t        clilen, addrlen;
   struct sockaddr_in address,remote;
   pthread_t        tid;
+  pthread_t temperature_thread_id;
 
   // Clear count of aux port reads
   aux_port_cnt = 0;
@@ -180,6 +188,13 @@ int main(int argc, char **argv)
   pthread_mutex_lock(&trig_mon_mutex);
   hw_trig_detected = 0; 	/* No trigger at start */
   pthread_mutex_unlock(&trig_mon_mutex);
+  
+  pthread_mutex_init(&temp_value_mutex, NULL);
+  pthread_mutex_lock(&temp_value_mutex);
+  temperature_1 = TEMP_INVALID;
+  temperature_2 = TEMP_INVALID;
+  temperature_error = 0;	/* No error to start */
+  pthread_mutex_unlock(&temp_value_mutex);
 
   /* Initialize exposure time -- do this before a mutex lock/unlock for hopeful memory barrier */
   exp_time = 0;
@@ -192,7 +207,9 @@ int main(int argc, char **argv)
 
   /* Spawn trigger monitor */
   pthread_create(&tid, NULL, &thread_hw_trig_mon, NULL);
-  
+
+  /* Spawn temperature read thread */
+  pthread_create(&temperature_thread_id, NULL, &pt_read_temperature, NULL);
 
 
   /* Test mode */
@@ -856,42 +873,30 @@ void *thread_main(void *arg)
 	
       case LBNL_TEMPS:
 	printf ("cmd: TEMPS\n");
-	/* Check if we can perform a temperature read */
-	pthread_mutex_lock(&temp_ability_mutex);
-	if (temp_read_ability == TEMP_READ_DONE) /* All flags set, no extras */
-	  {
-	    iaux1 = 1;		/* Set we can read */
-	  }
-	else			/* All flags not set */
-	  {
-	    iaux1 = 0;		/* We cannot read */
-	  }
-	pthread_mutex_unlock(&temp_ability_mutex);
+	/* This just reads the variables and passes them on */
+	pthread_mutex_lock(&temp_value_mutex);
+	faux1 = temperature_1;	/* Copy temperatures */
+	faux2 = temperature_2;
+	ret = temperature_error; /* Copy status */
+	pthread_mutex_unlock(&temp_value_mutex);
 	
-	/* Branch on iaux1  */
-	if (iaux1)		/* We can read */
+	/* Populate error message in response */
+	if (ret)		/* Error in read */
 	  {
-	    if ((ret=lbnl_controller_get_temps (dfd, &faux1, &faux2))!=0){
-	      printf ("ERROR %d\n",ret);
-	      sprintf (response.strmsg, "ERROR %d\n",ret);
-	    } else {
-	      sprintf (response.strmsg, "DONE");
-	    }
-	    response.status = ret;
+	    sprintf(response.strmsg, "ERROR %d\n", ret);
 	  }
-	else			/* We can't read */
+	else			/* No error in read */
 	  {
-	    response.status = 0; /* Set as no error */
-	    sprintf (response.strmsg, "DONE");
-	    faux1 = -1234.5;	/* Contrived, recognizable, impossible value */
-	    faux2 = -1234.5;	/* ibid */
+	    sprintf(response.strmsg, "DONE");
 	  }
-	//			faux1 = 22.5;
-	//			faux2 = 23.5;
+	/* Set response status */
+	response.status = ret;
+	
+	/* Populate temperatures */
 	*((float *) &response.data[0]) =  faux1;
 	*((float *) &response.data[1]) =  faux2;
 		
-	printf ("temp1 %f, temp2 %f\n", faux1, faux2);
+	/* Send the response */
 	send (fdin, (void *)&response, sizeof (respstruct_t),0);
 	break;
       case LBNL_IDLE:
@@ -2572,3 +2577,65 @@ void populate_fast_mode(const cds_t *cds_normal, const delays_t *ccd_delay_norma
 
   return;
 }
+
+void *pt_read_temperature(void *arg)
+{
+  unsigned int b_temp_ready;
+  unsigned int temp_ready_value;
+  float temp_1_aux, temp_2_aux;	/* Auxilliary variables for holding temperatures */
+  int lbnl_ret;
+
+  /* Loop forever, once per second approx */
+  while (1)
+    {
+      printf("Temp monitor thread reading temperature.\n");
+      fflush(stdout);
+      /* See if we can read the temperature */
+      pthread_mutex_lock(&temp_ability_mutex);
+      if (temp_read_ability == TEMP_READ_DONE) /* All flags set, no extras */
+	{
+	  b_temp_ready = 1;		/* Set so we can read */
+	}
+      else				/* All flags not set */
+	{
+	  b_temp_ready = 0;		/* We cannot read */
+	}
+      pthread_mutex_unlock(&temp_ability_mutex);
+      
+      /* Branch on ability to read temperature */
+      
+      if (b_temp_ready)		/* Can read temperature, so talk SPI */
+	{
+	  lbnl_ret = lbnl_controller_get_temps(dfd, &temp_1_aux, &temp_2_aux); /* Read temperature */
+	  if (lbnl_ret)		/* Error */
+	    {
+	      /* Report invalid temperatures and error code */
+	      pthread_mutex_lock(&temp_value_mutex);
+	      temperature_1 = TEMP_INVALID;
+	      temperature_2 = TEMP_INVALID;
+	      temperature_error = lbnl_ret;
+	      pthread_mutex_unlock(&temp_value_mutex);
+	    }
+	  else			/* No error in read */
+	    {
+	      pthread_mutex_lock(&temp_value_mutex);
+	      temperature_1 = temp_1_aux;
+	      temperature_2 = temp_2_aux;
+	      temperature_error = 0;
+	      pthread_mutex_unlock(&temp_value_mutex);
+	    }
+	}
+      else			/* Can't read temperature */
+	{
+	  pthread_mutex_lock(&temp_value_mutex);
+	  temperature_1 = TEMP_INVALID; /* Report invalid temperatures */
+	  temperature_2 = TEMP_INVALID;
+	  temperature_error = 0; /* No error, since no SPI communications */
+	  pthread_mutex_unlock(&temp_value_mutex);
+	}
+
+      usleep(1000000);		/* Sleep 1 second, for sampling */
+    }
+}
+      
+	      
